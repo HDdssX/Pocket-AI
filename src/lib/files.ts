@@ -211,6 +211,37 @@ export async function pickImageAttachments(): Promise<PendingAttachment[]> {
   return attachments;
 }
 
+export async function captureImageAttachment(): Promise<PendingAttachment[]> {
+  const permission = await ImagePicker.requestCameraPermissionsAsync();
+  if (!permission.granted) {
+    Alert.alert('Permission needed', 'Camera access is required to take a photo.');
+    return [];
+  }
+
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: ['images'],
+    base64: false,
+    quality: 0.9,
+  });
+
+  if (result.canceled || !result.assets?.[0]) {
+    return [];
+  }
+
+  const asset = result.assets[0];
+  return [
+    await persistAsset(
+      {
+        uri: asset.uri,
+        name: asset.fileName || `camera-${Date.now()}.jpg`,
+        mimeType: asset.mimeType || 'image/jpeg',
+        size: asset.fileSize,
+      },
+      'image'
+    ),
+  ];
+}
+
 export async function pickDocumentAttachments(): Promise<PendingAttachment[]> {
   const result = await DocumentPicker.getDocumentAsync({
     multiple: true,

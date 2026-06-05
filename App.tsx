@@ -21,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { MessageBubble } from './src/components/MessageBubble';
 import {
+  captureImageAttachment,
   clearAllAttachmentFiles,
   deleteAttachmentRecords,
   pickDocumentAttachments,
@@ -160,6 +161,8 @@ type LanguageCopy = {
   cancel: string;
   clear: string;
   composerPlaceholder: string;
+  attachMenu: string;
+  camera: string;
   image: string;
   file: string;
   send: string;
@@ -293,6 +296,8 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     cancel: '取消',
     clear: '清空',
     composerPlaceholder: '问点什么...',
+    attachMenu: '添加附件',
+    camera: '拍照',
     image: '图片',
     file: '文件',
     send: '发送',
@@ -415,6 +420,8 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     cancel: 'Cancel',
     clear: 'Clear',
     composerPlaceholder: 'Ask anything...',
+    attachMenu: 'Add attachment',
+    camera: 'Camera',
     image: 'Image',
     file: 'File',
     send: 'Send',
@@ -449,6 +456,8 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     sessionMeta: (model, count) => `${model} | ${count} messages`,
   },
 };
+
+const STREAMING_FLUSH_INTERVAL_MS = 120;
 
 function createConversation(profile: ApiProfile, defaultTitle: string): ConversationRecord {
   const now = new Date().toISOString();
@@ -591,6 +600,9 @@ export default function App() {
   const skipNextPersistRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamingTextRef = useRef('');
+  const streamingFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamingMessageIdRef = useRef<string | null>(null);
+  const streamingConversationIdRef = useRef<string | null>(null);
   const reasoningEffortNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handledSharedImageUrisRef = useRef(new Set<string>());
   const [ready, setReady] = useState(false);
@@ -599,6 +611,7 @@ export default function App() {
   const [draftProfile, setDraftProfile] = useState<ApiProfile>(DEFAULT_PROFILE);
   const [composerText, setComposerText] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [attachmentMenuVisible, setAttachmentMenuVisible] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [testingProfile, setTestingProfile] = useState(false);
   const [sending, setSending] = useState(false);
@@ -647,12 +660,22 @@ export default function App() {
 
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
-  }, [persisted, pendingAttachments, composerText, settingsVisible, sessionsVisible, apiProfilesVisible]);
+  }, [
+    activeConversation?.id,
+    activeConversation?.messages.length,
+    pendingAttachments.length,
+    settingsVisible,
+    sessionsVisible,
+    apiProfilesVisible,
+  ]);
 
   useEffect(
     () => () => {
       if (reasoningEffortNoticeTimerRef.current) {
         clearTimeout(reasoningEffortNoticeTimerRef.current);
+      }
+      if (streamingFlushTimerRef.current) {
+        clearTimeout(streamingFlushTimerRef.current);
       }
     },
     []
@@ -939,12 +962,24 @@ export default function App() {
     ]);
   }
 
+  function appendPendingAttachments(attachments: PendingAttachment[]) {
+    if (attachments.length > 0) {
+      setPendingAttachments((current) => [...current, ...attachments]);
+      setAttachmentMenuVisible(false);
+    }
+  }
+
+  async function attachFromCamera() {
+    try {
+      appendPendingAttachments(await captureImageAttachment());
+    } catch (error) {
+      Alert.alert(copy.imagePickerFailed, error instanceof Error ? error.message : copy.imagePickerFailedFallback);
+    }
+  }
+
   async function attachImages() {
     try {
-      const attachments = await pickImageAttachments();
-      if (attachments.length > 0) {
-        setPendingAttachments((current) => [...current, ...attachments]);
-      }
+      appendPendingAttachments(await pickImageAttachments());
     } catch (error) {
       Alert.alert(copy.imagePickerFailed, error instanceof Error ? error.message : copy.imagePickerFailedFallback);
     }
@@ -952,16 +987,57 @@ export default function App() {
 
   async function attachFiles() {
     try {
-      const attachments = await pickDocumentAttachments();
-      if (attachments.length > 0) {
-        setPendingAttachments((current) => [...current, ...attachments]);
-      }
+      appendPendingAttachments(await pickDocumentAttachments());
     } catch (error) {
       Alert.alert(copy.filePickerFailed, error instanceof Error ? error.message : copy.filePickerFailedFallback);
     }
   }
 
+  function flushStreamingText() {
+    const conversationId = streamingConversationIdRef.current;
+    const messageId = streamingMessageIdRef.current;
+    if (!conversationId || !messageId) {
+      return;
+    }
+
+    const nextText = streamingTextRef.current;
+    skipNextPersistRef.current = true;
+    setPersisted((current) => ({
+      ...current,
+      conversations: current.conversations.map((item) =>
+        item.id === conversationId
+          ? {
+              ...item,
+              updatedAt: new Date().toISOString(),
+              messages: item.messages.map((message) =>
+                message.id === messageId ? { ...message, text: nextText } : message
+              ),
+            }
+          : item
+      ),
+    }));
+  }
+
+  function scheduleStreamingFlush() {
+    if (streamingFlushTimerRef.current) {
+      return;
+    }
+
+    streamingFlushTimerRef.current = setTimeout(() => {
+      streamingFlushTimerRef.current = null;
+      flushStreamingText();
+    }, STREAMING_FLUSH_INTERVAL_MS);
+  }
+
+  function clearStreamingFlushTimer() {
+    if (streamingFlushTimerRef.current) {
+      clearTimeout(streamingFlushTimerRef.current);
+      streamingFlushTimerRef.current = null;
+    }
+  }
+
   function removePendingAttachment(id: string) {
+    setAttachmentMenuVisible(false);
     const attachment = pendingAttachments.find((item) => item.id === id);
     setPendingAttachments((current) => current.filter((item) => item.id !== id));
     if (attachment) {
@@ -1040,10 +1116,13 @@ export default function App() {
 
     setComposerText('');
     setPendingAttachments([]);
+    setAttachmentMenuVisible(false);
     setSending(true);
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
     streamingTextRef.current = '';
+    streamingConversationIdRef.current = conversation.id;
+    streamingMessageIdRef.current = streamingAssistantMessage.id;
 
     try {
       const turn = await createAssistantTurn({
@@ -1054,27 +1133,10 @@ export default function App() {
         signal: abortController.signal,
         onTextDelta: (delta) => {
           streamingTextRef.current += delta;
-          setPersisted((current) => ({
-            ...current,
-            conversations: current.conversations.map((item) =>
-              item.id === conversation.id
-                ? {
-                    ...item,
-                    updatedAt: new Date().toISOString(),
-                    messages: item.messages.map((message) =>
-                      message.id === streamingAssistantMessage.id
-                        ? {
-                            ...message,
-                            text: `${message.text}${delta}`,
-                          }
-                        : message
-                    ),
-                  }
-                : item
-            ),
-          }));
+          scheduleStreamingFlush();
         },
       });
+      clearStreamingFlushTimer();
       const assistantMessage: ChatMessage = {
         ...streamingAssistantMessage,
         text: turn.assistantText || streamingTextRef.current || '(empty response)',
@@ -1090,6 +1152,7 @@ export default function App() {
       };
       updateConversations(upsertConversation(optimisticConversations, completedConversation), conversation.id);
     } catch (error) {
+      clearStreamingFlushTimer();
       if (abortController.signal.aborted) {
         const stoppedMessage: ChatMessage = {
           ...streamingAssistantMessage,
@@ -1127,6 +1190,8 @@ export default function App() {
       if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null;
       }
+      streamingConversationIdRef.current = null;
+      streamingMessageIdRef.current = null;
       streamingTextRef.current = '';
       setSending(false);
     }
@@ -1138,6 +1203,7 @@ export default function App() {
     updateConversations([conversation, ...persisted.conversations], conversation.id);
     setComposerText('');
     setPendingAttachments([]);
+    setAttachmentMenuVisible(false);
     setSessionsVisible(false);
     setSettingsVisible(false);
   }
@@ -1363,24 +1429,33 @@ export default function App() {
                 </ScrollView>
               )}
               <View style={styles.composerRow}>
-                <Pressable
-                  style={styles.smallAction}
-                  onPress={attachImages}
-                  disabled={composerDisabled}
-                  accessibilityRole="button"
-                  accessibilityLabel={copy.image}
-                >
-                  <Text style={styles.smallActionText}>{uiLanguage === 'zh' ? '图' : 'Img'}</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.smallAction}
-                  onPress={attachFiles}
-                  disabled={composerDisabled}
-                  accessibilityRole="button"
-                  accessibilityLabel={copy.file}
-                >
-                  <Text style={styles.smallActionText}>{uiLanguage === 'zh' ? '文' : 'Doc'}</Text>
-                </Pressable>
+                <View style={styles.attachMenuWrap}>
+                  {attachmentMenuVisible && !composerDisabled && (
+                    <View style={styles.attachMenu}>
+                      <Pressable style={styles.attachMenuItem} onPress={attachFromCamera}>
+                        <Text style={styles.attachMenuIcon}>{uiLanguage === 'zh' ? '拍' : 'Cam'}</Text>
+                        <Text style={styles.attachMenuText}>{copy.camera}</Text>
+                      </Pressable>
+                      <Pressable style={styles.attachMenuItem} onPress={attachImages}>
+                        <Text style={styles.attachMenuIcon}>{uiLanguage === 'zh' ? '图' : 'Img'}</Text>
+                        <Text style={styles.attachMenuText}>{copy.image}</Text>
+                      </Pressable>
+                      <Pressable style={styles.attachMenuItem} onPress={attachFiles}>
+                        <Text style={styles.attachMenuIcon}>{uiLanguage === 'zh' ? '文' : 'Doc'}</Text>
+                        <Text style={styles.attachMenuText}>{copy.file}</Text>
+                      </Pressable>
+                    </View>
+                  )}
+                  <Pressable
+                    style={[styles.smallAction, attachmentMenuVisible && styles.smallActionActive]}
+                    onPress={() => setAttachmentMenuVisible((visible) => !visible)}
+                    disabled={composerDisabled}
+                    accessibilityRole="button"
+                    accessibilityLabel={copy.attachMenu}
+                  >
+                    <Text style={styles.smallActionText}>+</Text>
+                  </Pressable>
+                </View>
                 <TextInput
                   value={composerText}
                   onChangeText={setComposerText}
@@ -2043,9 +2118,56 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  smallActionActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
   smallActionText: {
     color: '#334155',
-    fontSize: 12,
+    fontSize: 20,
+    fontWeight: '800',
+    lineHeight: 22,
+  },
+  attachMenuWrap: {
+    position: 'relative',
+  },
+  attachMenu: {
+    position: 'absolute',
+    left: 0,
+    bottom: 46,
+    width: 116,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+    backgroundColor: '#FFFFFF',
+    padding: 5,
+    gap: 4,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+    zIndex: 20,
+  },
+  attachMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 36,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    backgroundColor: '#F8FAFC',
+  },
+  attachMenuIcon: {
+    width: 28,
+    color: '#2563EB',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  attachMenuText: {
+    flex: 1,
+    color: '#111827',
+    fontSize: 13,
     fontWeight: '800',
   },
   sendAction: {

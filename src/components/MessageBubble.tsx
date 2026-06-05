@@ -84,6 +84,59 @@ function TechnicalTextBlock({ text }: { text: string }) {
   );
 }
 
+function trimCodeBlockContent(content: string): string {
+  return content.endsWith('\n') ? content.slice(0, -1) : content;
+}
+
+function CodeBlock({
+  code,
+  language,
+}: {
+  code: string;
+  language: UiLanguage;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) {
+      return undefined;
+    }
+
+    const timer = setTimeout(() => setCopied(false), 1000);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  async function copyCode() {
+    if (!code.trim()) {
+      return;
+    }
+    await Clipboard.setStringAsync(code);
+    setCopied(true);
+  }
+
+  return (
+    <View style={styles.codeBlockWrap}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.codeBlockScrollContent}
+      >
+        <Text selectable style={styles.codeBlockText}>
+          {code}
+        </Text>
+      </ScrollView>
+      <Pressable
+        style={[styles.codeCopyButton, copied && styles.codeCopyButtonDone]}
+        onPress={copyCode}
+        accessibilityRole="button"
+        accessibilityLabel={language === 'zh' ? '复制代码段' : 'Copy code block'}
+      >
+        <CopyIcon done={copied} />
+      </Pressable>
+    </View>
+  );
+}
+
 function MessageText({ message, isUser, language }: { message: ChatMessage; isUser: boolean; language: UiLanguage }) {
   if (!message.text) {
     return null;
@@ -102,6 +155,14 @@ function MessageText({ message, isUser, language }: { message: ChatMessage; isUs
   return (
     <Markdown
       mergeStyle
+      rules={{
+        code_block: (node) => (
+          <CodeBlock key={node.key} code={trimCodeBlockContent(node.content)} language={language} />
+        ),
+        fence: (node) => (
+          <CodeBlock key={node.key} code={trimCodeBlockContent(node.content)} language={language} />
+        ),
+      }}
       onLinkPress={(url) => {
         void Linking.openURL(url);
         return false;
@@ -241,6 +302,46 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: 13,
     lineHeight: 20,
+  },
+  codeBlockWrap: {
+    position: 'relative',
+    maxWidth: '100%',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+    backgroundColor: '#F1F5F9',
+    marginTop: 2,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  codeBlockScrollContent: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
+    paddingRight: 48,
+  },
+  codeBlockText: {
+    color: '#111827',
+    fontFamily: 'monospace',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  codeCopyButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  codeCopyButtonDone: {
+    borderColor: '#2563EB',
+    backgroundColor: '#2563EB',
   },
   attachments: {
     marginTop: 12,
