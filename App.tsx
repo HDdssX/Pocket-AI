@@ -12,6 +12,7 @@ import {
   Pressable,
   SafeAreaView,
   ScrollView,
+  Share,
   StatusBar,
   StyleSheet,
   Text,
@@ -647,6 +648,8 @@ export default function App() {
   const handledSharedImageUrisRef = useRef(new Set<string>());
   const sessionDrawerTranslateX = useRef(new Animated.Value(0)).current;
   const sessionDrawerHiddenOffsetRef = useRef(360);
+  const settingsPanelTranslateX = useRef(new Animated.Value(0)).current;
+  const settingsPanelHiddenOffsetRef = useRef(360);
   const [ready, setReady] = useState(false);
   const [persisted, setPersisted] = useState<PersistedState>(EMPTY_STATE);
   const [apiKey, setApiKey] = useState('');
@@ -658,6 +661,7 @@ export default function App() {
   const [testingProfile, setTestingProfile] = useState(false);
   const [sending, setSending] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
+  const [chatMenuVisible, setChatMenuVisible] = useState(false);
   const [sessionsVisible, setSessionsVisible] = useState(false);
   const [apiProfilesVisible, setApiProfilesVisible] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
@@ -683,6 +687,7 @@ export default function App() {
   const renamingConversation =
     persisted.conversations.find((conversation) => conversation.id === renamingConversationId) ?? null;
   sessionDrawerHiddenOffsetRef.current = Math.max(windowWidth, 320);
+  settingsPanelHiddenOffsetRef.current = Math.max(windowWidth, 320);
   const sessionDrawerPanResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gestureState) =>
@@ -690,6 +695,17 @@ export default function App() {
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dx > 70) {
           closeSessionsDrawer();
+        }
+      },
+    })
+  ).current;
+  const settingsPanelPanResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dx) > 24 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.25,
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx < -70) {
+          closeSettingsPanel();
         }
       },
     })
@@ -728,6 +744,19 @@ export default function App() {
       useNativeDriver: true,
     }).start();
   }, [sessionDrawerTranslateX, sessionsVisible, windowWidth]);
+
+  useEffect(() => {
+    if (!settingsVisible) {
+      return;
+    }
+    const hiddenOffset = settingsPanelHiddenOffsetRef.current;
+    settingsPanelTranslateX.setValue(hiddenOffset);
+    Animated.timing(settingsPanelTranslateX, {
+      toValue: 0,
+      duration: 190,
+      useNativeDriver: true,
+    }).start();
+  }, [settingsPanelTranslateX, settingsVisible, windowWidth]);
 
   useEffect(() => {
     if (!shouldScrollToBottomRef.current) {
@@ -833,11 +862,23 @@ export default function App() {
   }
 
   async function openSettings() {
+    setChatMenuVisible(false);
     setDraftProfile(activeProfile);
     setApiKey(await loadProfileApiKey(activeProfile.id));
     resetReasoningEffortInput();
     setSettingsSection('root');
     setSettingsVisible(true);
+  }
+
+  function closeSettingsPanel() {
+    Animated.timing(settingsPanelTranslateX, {
+      toValue: settingsPanelHiddenOffsetRef.current,
+      duration: 160,
+      useNativeDriver: true,
+    }).start(() => {
+      setSettingsVisible(false);
+      setSettingsSection('root');
+    });
   }
 
   function openApiProfiles() {
@@ -1345,6 +1386,7 @@ export default function App() {
     setComposerText('');
     setPendingAttachments([]);
     setAttachmentMenuVisible(false);
+    setChatMenuVisible(false);
     setSessionsVisible(false);
     setSettingsVisible(false);
   }
@@ -1362,6 +1404,25 @@ export default function App() {
   function openSettingsFromSessions() {
     setSessionsVisible(false);
     void openSettings();
+  }
+
+  async function shareActiveConversation() {
+    setChatMenuVisible(false);
+    if (!activeConversation) {
+      return;
+    }
+    await Share.share({
+      title: activeConversation.title,
+      message: formatConversationMarkdown(activeConversation),
+    }).catch(() => undefined);
+  }
+
+  function confirmDeleteActiveConversation() {
+    setChatMenuVisible(false);
+    if (!activeConversation) {
+      return;
+    }
+    confirmDeleteConversation(activeConversation.id);
   }
 
   function openConversation(conversationId: string) {
@@ -1581,14 +1642,40 @@ export default function App() {
               </Pressable>
               <Pressable
                 style={styles.iconAction}
-                onPress={openSettings}
+                onPress={() => setChatMenuVisible((visible) => !visible)}
                 accessibilityRole="button"
-                accessibilityLabel={copy.settings}
+                accessibilityLabel="Conversation menu"
               >
                 <Text style={styles.iconActionText}>⋯</Text>
               </Pressable>
             </View>
           </View>
+
+          {chatMenuVisible && (
+            <>
+              <Pressable style={styles.chatMenuDismiss} onPress={() => setChatMenuVisible(false)} />
+              <View style={styles.chatMenu}>
+                <Pressable
+                  style={[styles.chatMenuItem, !activeConversation && styles.disabledAction]}
+                  onPress={() => {
+                    void shareActiveConversation();
+                  }}
+                  disabled={!activeConversation}
+                >
+                  <Text style={styles.chatMenuIcon}>S</Text>
+                  <Text style={styles.chatMenuText}>{uiLanguage === 'zh' ? '分享' : 'Share'}</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.chatMenuItem, !activeConversation && styles.disabledAction]}
+                  onPress={confirmDeleteActiveConversation}
+                  disabled={!activeConversation}
+                >
+                  <Text style={[styles.chatMenuIcon, styles.chatMenuDangerText]}>D</Text>
+                  <Text style={[styles.chatMenuText, styles.chatMenuDangerText]}>{copy.delete}</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
 
           <View style={styles.chatShell}>
             <ScrollView
@@ -1699,10 +1786,12 @@ export default function App() {
         </KeyboardAvoidingView>
       </SafeAreaView>
 
-      <Modal visible={settingsVisible} animationType="slide" transparent onRequestClose={() => setSettingsVisible(false)}>
-        <View style={styles.modalBackdrop}>
-          <Pressable style={styles.modalDismissArea} onPress={() => setSettingsVisible(false)} />
-          <View style={styles.modalCard}>
+      <Modal visible={settingsVisible} animationType="none" onRequestClose={closeSettingsPanel}>
+        <Animated.View
+          style={[styles.settingsScreen, { transform: [{ translateX: settingsPanelTranslateX }] }]}
+          {...settingsPanelPanResponder.panHandlers}
+        >
+          <SafeAreaView style={styles.settingsScreenSafe}>
             <View style={styles.settingsHeader}>
               {settingsSection !== 'root' && (
                 <Pressable style={styles.backButton} onPress={() => setSettingsSection('root')}>
@@ -1726,7 +1815,7 @@ export default function App() {
             </View>
 
             <ScrollView
-              style={styles.modalScroll}
+              style={styles.settingsScreenScroll}
               keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
@@ -1809,8 +1898,8 @@ export default function App() {
                 </View>
               )}
             </ScrollView>
-          </View>
-        </View>
+          </SafeAreaView>
+        </Animated.View>
       </Modal>
 
       <Modal visible={modelPickerVisible} animationType="slide" transparent onRequestClose={() => setModelPickerVisible(false)}>
@@ -2150,16 +2239,6 @@ export default function App() {
           <SafeAreaView style={styles.sessionDrawer}>
             <View style={styles.drawerHeader}>
               <Text style={styles.drawerTitle}>{copy.title}</Text>
-              <View style={styles.drawerHeaderActions}>
-                <Pressable
-                  style={styles.drawerAvatar}
-                  onPress={openSettingsFromSessions}
-                  accessibilityRole="button"
-                  accessibilityLabel={copy.settings}
-                >
-                  <Text style={styles.drawerAvatarText}>FA</Text>
-                </Pressable>
-              </View>
             </View>
 
             <TextInput
@@ -2316,6 +2395,53 @@ const styles = StyleSheet.create({
   topActions: {
     flexDirection: 'row',
     gap: 8,
+  },
+  chatMenuDismiss: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 9,
+  },
+  chatMenu: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? 72 : 82,
+    right: 14,
+    zIndex: 10,
+    minWidth: 172,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#EEF2F7',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.14,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 10,
+  },
+  chatMenuItem: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 18,
+  },
+  chatMenuIcon: {
+    width: 24,
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  chatMenuText: {
+    color: '#111827',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  chatMenuDangerText: {
+    color: '#DC2626',
   },
   iconAction: {
     width: 36,
@@ -2534,6 +2660,20 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+  },
+  settingsScreen: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  settingsScreenSafe: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 18,
+    paddingTop: Platform.OS === 'android' ? 20 : 8,
+  },
+  settingsScreenScroll: {
+    flex: 1,
+    marginTop: 18,
   },
   modalTitle: {
     color: '#111827',
