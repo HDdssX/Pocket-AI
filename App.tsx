@@ -701,10 +701,13 @@ export default function App() {
   ).current;
   const settingsPanelPanResponder = useRef(
     PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_, gestureState) =>
+        Math.abs(gestureState.dx) > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.05,
       onMoveShouldSetPanResponder: (_, gestureState) =>
-        Math.abs(gestureState.dx) > 24 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.25,
+        Math.abs(gestureState.dx) > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.05,
+      onPanResponderTerminationRequest: () => false,
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx < -70) {
+        if (gestureState.dx < -45) {
           closeSettingsPanel();
         }
       },
@@ -750,7 +753,7 @@ export default function App() {
       return;
     }
     const hiddenOffset = settingsPanelHiddenOffsetRef.current;
-    settingsPanelTranslateX.setValue(hiddenOffset);
+    settingsPanelTranslateX.setValue(-hiddenOffset);
     Animated.timing(settingsPanelTranslateX, {
       toValue: 0,
       duration: 190,
@@ -872,7 +875,7 @@ export default function App() {
 
   function closeSettingsPanel() {
     Animated.timing(settingsPanelTranslateX, {
-      toValue: settingsPanelHiddenOffsetRef.current,
+      toValue: -settingsPanelHiddenOffsetRef.current,
       duration: 160,
       useNativeDriver: true,
     }).start(() => {

@@ -377,9 +377,9 @@ function uniqueCompact(values: string[]): string[] {
 function looksLikeModelId(value: string): boolean {
   const compact = value.trim();
   return (
-    /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,96}$/.test(compact) &&
+    /^[A-Za-z0-9][A-Za-z0-9._:/+-]{1,127}$/.test(compact) &&
     !/^https?:\/\//i.test(compact) &&
-    /(gpt|o\d|deepseek|claude|gemini|qwen|glm|llama|mistral|yi-|kimi|moonshot|doubao|hunyuan|ernie|codex|chat|reasoner|flash|turbo|mini|pro|max)/i.test(
+    /(gpt|o\d|deepseek|claude|gemini|qwen|glm|llama|mistral|yi-|kimi|moonshot|doubao|hunyuan|ernie|codex|chat|reasoner|flash|turbo|mini|pro|max|vision|audio|embedding|rerank|whisper|tts|dall)/i.test(
       compact
     )
   );
@@ -638,7 +638,11 @@ export async function fetchAvailableModels(options: {
 }): Promise<FetchModelsResult> {
   const { profile, apiKey, timeoutMs = 15000 } = options;
   const baseUrl = normalizeBaseUrl(profile.baseUrl);
-  const endpoints = [`${baseUrl}/models`, `${baseUrl}/model`];
+  const endpointCandidates = [`${baseUrl}/models`, `${baseUrl}/model`];
+  if (!/\/v1$/i.test(baseUrl)) {
+    endpointCandidates.push(`${baseUrl}/v1/models`);
+  }
+  const endpoints = uniqueCompact(endpointCandidates);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let lastError: unknown;
