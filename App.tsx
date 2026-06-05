@@ -651,6 +651,7 @@ export default function App() {
   const sessionDrawerHiddenOffsetRef = useRef(360);
   const settingsPanelTranslateX = useRef(new Animated.Value(0)).current;
   const settingsPanelHiddenOffsetRef = useRef(360);
+  const settingsReturnTargetRef = useRef<'chat' | 'drawer'>('chat');
   const settingsTouchStartRef = useRef<{ x: number; y: number } | null>(null);
   const settingsTouchHasClosedRef = useRef(false);
   const [ready, setReady] = useState(false);
@@ -696,7 +697,7 @@ export default function App() {
       onMoveShouldSetPanResponder: (_, gestureState) =>
         Math.abs(gestureState.dx) > 24 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.25,
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx > 70) {
+        if (gestureState.dx < -70) {
           closeSessionsDrawer();
         }
       },
@@ -759,7 +760,7 @@ export default function App() {
       return;
     }
     const hiddenOffset = settingsPanelHiddenOffsetRef.current;
-    settingsPanelTranslateX.setValue(-hiddenOffset);
+    settingsPanelTranslateX.setValue(hiddenOffset);
     Animated.timing(settingsPanelTranslateX, {
       toValue: 0,
       duration: 190,
@@ -870,8 +871,9 @@ export default function App() {
     return created;
   }
 
-  async function openSettings() {
+  async function openSettings(returnTarget: 'chat' | 'drawer' = 'chat') {
     setChatMenuVisible(false);
+    settingsReturnTargetRef.current = returnTarget;
     setDraftProfile(activeProfile);
     setApiKey(await loadProfileApiKey(activeProfile.id));
     resetReasoningEffortInput();
@@ -881,12 +883,16 @@ export default function App() {
 
   function closeSettingsPanel() {
     Animated.timing(settingsPanelTranslateX, {
-      toValue: -settingsPanelHiddenOffsetRef.current,
+      toValue: settingsPanelHiddenOffsetRef.current,
       duration: 160,
       useNativeDriver: true,
     }).start(() => {
       setSettingsVisible(false);
       setSettingsSection('root');
+      if (settingsReturnTargetRef.current === 'drawer') {
+        setSessionsVisible(true);
+      }
+      settingsReturnTargetRef.current = 'chat';
     });
   }
 
@@ -909,13 +915,7 @@ export default function App() {
       return false;
     }
 
-    if (settingsSection !== 'root' && dx > 0) {
-      settingsTouchHasClosedRef.current = true;
-      setSettingsSection('root');
-      return true;
-    }
-
-    if (settingsSection === 'root' && dx < 0) {
+    if (dx > 0) {
       settingsTouchHasClosedRef.current = true;
       closeSettingsPanel();
       return true;
@@ -1455,7 +1455,7 @@ export default function App() {
 
   function openSettingsFromSessions() {
     setSessionsVisible(false);
-    void openSettings();
+    void openSettings('drawer');
   }
 
   async function shareActiveConversation() {
