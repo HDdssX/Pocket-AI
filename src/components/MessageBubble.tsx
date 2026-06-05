@@ -83,17 +83,105 @@ function TechnicalTextBlock({ text }: { text: string }) {
   );
 }
 
+function normalizeLatexMathText(text: string): string {
+  const superscripts: Record<string, string> = {
+    '0': '⁰',
+    '1': '¹',
+    '2': '²',
+    '3': '³',
+    '4': '⁴',
+    '5': '⁵',
+    '6': '⁶',
+    '7': '⁷',
+    '8': '⁸',
+    '9': '⁹',
+    '+': '⁺',
+    '-': '⁻',
+    '=': '⁼',
+    '(': '⁽',
+    ')': '⁾',
+    a: 'ᵃ',
+    b: 'ᵇ',
+    c: 'ᶜ',
+    d: 'ᵈ',
+    e: 'ᵉ',
+    i: 'ⁱ',
+    k: 'ᵏ',
+    m: 'ᵐ',
+    n: 'ⁿ',
+    p: 'ᵖ',
+    q: 'ᑫ',
+    r: 'ʳ',
+    t: 'ᵗ',
+    x: 'ˣ',
+    y: 'ʸ',
+  };
+  const replacements: Array<[RegExp, string]> = [
+    [/\\times\b/g, '×'],
+    [/\\cdot\b/g, '·'],
+    [/\\div\b/g, '÷'],
+    [/\\phi\b/g, 'φ'],
+    [/\\varphi\b/g, 'φ'],
+    [/\\Phi\b/g, 'Φ'],
+    [/\\equiv\b/g, '≡'],
+    [/\\neq\b/g, '≠'],
+    [/\\leq?\b/g, '≤'],
+    [/\\geq?\b/g, '≥'],
+    [/\\lt\b/g, '<'],
+    [/\\gt\b/g, '>'],
+    [/\\pm\b/g, '±'],
+    [/\\infty\b/g, '∞'],
+    [/\\mod\b/g, 'mod'],
+    [/\\pmod\s*\{([^}]+)\}/g, '(mod $1)'],
+    [/\\left\s*/g, ''],
+    [/\\right\s*/g, ''],
+    [/\\,/g, ' '],
+    [/\\;/g, ' '],
+    [/\\:/g, ' '],
+    [/\\\s/g, ' '],
+  ];
+
+  let normalized = text
+    .replace(/\$\$([^$]+)\$\$/g, '$1')
+    .replace(/\$([^$\n]+)\$/g, '$1')
+    .replace(/\\\((.*?)\\\)/g, '$1')
+    .replace(/\\\[(.*?)\\\]/gs, '$1');
+
+  for (const [pattern, value] of replacements) {
+    normalized = normalized.replace(pattern, value);
+  }
+
+  return normalized
+    .replace(/\^\{([^{}]{1,8})\}/g, (_, value: string) =>
+      value
+        .split('')
+        .map((char) => superscripts[char] ?? char)
+        .join('')
+    )
+    .replace(/\^([0-9a-zA-Z()+-=]{1,4})/g, (_, value: string) =>
+      value
+        .split('')
+        .map((char) => superscripts[char] ?? char)
+        .join('')
+    )
+    .replace(/\{([^{}]+)\}/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
 function MessageText({ message, isUser }: { message: ChatMessage; isUser: boolean }) {
   if (!message.text) {
     return null;
   }
 
-  if (shouldUseTechnicalTextBlock(message.text)) {
-    return <TechnicalTextBlock text={message.text} />;
+  const displayText = normalizeLatexMathText(message.text);
+
+  if (shouldUseTechnicalTextBlock(displayText)) {
+    return <TechnicalTextBlock text={displayText} />;
   }
 
   if (isUser) {
-    return <Text selectable style={styles.bodyText}>{message.text}</Text>;
+    return <Text selectable style={styles.bodyText}>{displayText}</Text>;
   }
 
   return (
@@ -105,7 +193,7 @@ function MessageText({ message, isUser }: { message: ChatMessage; isUser: boolea
       }}
       style={markdownStyles}
     >
-      {message.text}
+      {displayText}
     </Markdown>
   );
 }
@@ -113,9 +201,9 @@ function MessageText({ message, isUser }: { message: ChatMessage; isUser: boolea
 function CopyIcon({ done }: { done: boolean }) {
   if (done) {
     return (
-      <View style={styles.checkIconBox}>
-        <View style={styles.checkStem} />
-        <View style={styles.checkArm} />
+      <View style={styles.doneIconCircle}>
+        <View style={styles.doneCheckStem} />
+        <View style={styles.doneCheckArm} />
       </View>
     );
   }
@@ -171,7 +259,7 @@ export function MessageBubble({ message, language }: Props) {
         {!!message.error && <Text style={styles.errorText}>{message.error}</Text>}
         {!!copyableText.trim() && (
           <View style={styles.actionRow}>
-            <Pressable style={styles.copyAction} onPress={copyMessage}>
+            <Pressable style={[styles.copyAction, copied && styles.copyActionCopied]} onPress={copyMessage}>
               <CopyIcon done={copied} />
             </Pressable>
           </View>
@@ -289,6 +377,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  copyActionCopied: {
+    borderColor: '#2563EB',
+    backgroundColor: '#2563EB',
+  },
   copyIconBox: {
     width: 16,
     height: 16,
@@ -315,28 +407,31 @@ const styles = StyleSheet.create({
     borderColor: '#475569',
     backgroundColor: '#FFFFFF',
   },
-  checkIconBox: {
+  doneIconCircle: {
     width: 16,
     height: 16,
-    transform: [{ rotate: '-45deg' }],
+    borderRadius: 8,
+    backgroundColor: '#2563EB',
   },
-  checkStem: {
+  doneCheckStem: {
     position: 'absolute',
-    left: 3,
-    top: 7,
+    left: 4,
+    top: 8,
+    width: 4.5,
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: '#FFFFFF',
+    transform: [{ rotate: '45deg' }],
+  },
+  doneCheckArm: {
+    position: 'absolute',
+    left: 7,
+    top: 5,
     width: 7,
-    height: 2.3,
+    height: 2,
     borderRadius: 2,
-    backgroundColor: '#059669',
-  },
-  checkArm: {
-    position: 'absolute',
-    left: 8,
-    top: 2,
-    width: 2.3,
-    height: 10,
-    borderRadius: 2,
-    backgroundColor: '#059669',
+    backgroundColor: '#FFFFFF',
+    transform: [{ rotate: '-45deg' }],
   },
 });
 

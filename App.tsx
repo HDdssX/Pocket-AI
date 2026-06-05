@@ -563,7 +563,6 @@ export default function App() {
   const [persisted, setPersisted] = useState<PersistedState>(EMPTY_STATE);
   const [apiKey, setApiKey] = useState('');
   const [draftProfile, setDraftProfile] = useState<ApiProfile>(DEFAULT_PROFILE);
-  const [draftLanguage, setDraftLanguage] = useState<UiLanguage>(DEFAULT_LANGUAGE);
   const [composerText, setComposerText] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -595,7 +594,6 @@ export default function App() {
       const key = await migrateLegacyApiKey(state.activeProfileId);
       setPersisted(state);
       setDraftProfile(getActiveProfile(state));
-      setDraftLanguage(state.uiLanguage);
       setApiKey(key);
       sweepOrphanedAttachments(getAllConversationAttachments(state.conversations)).catch(() => undefined);
       setReady(true);
@@ -690,7 +688,6 @@ export default function App() {
 
   async function openSettings() {
     setDraftProfile(activeProfile);
-    setDraftLanguage(persisted.uiLanguage);
     setApiKey(await loadProfileApiKey(activeProfile.id));
     setSettingsVisible(true);
   }
@@ -720,17 +717,11 @@ export default function App() {
     setApiKey('');
   }
 
-  async function handleSaveSettings() {
-    setSavingProfile(true);
-    try {
-      setPersisted((current) => ({
-        ...current,
-        uiLanguage: draftLanguage,
-      }));
-      setSettingsVisible(false);
-    } finally {
-      setSavingProfile(false);
-    }
+  function applyUiLanguage(language: UiLanguage) {
+    setPersisted((current) => ({
+      ...current,
+      uiLanguage: language,
+    }));
   }
 
   async function handleSaveApiProfile() {
@@ -1137,7 +1128,6 @@ export default function App() {
       skipNextPersistRef.current = true;
       setPersisted(EMPTY_STATE);
       setDraftProfile(DEFAULT_PROFILE);
-      setDraftLanguage(DEFAULT_LANGUAGE);
       setApiKey('');
       setComposerText('');
       setPendingAttachments([]);
@@ -1323,9 +1313,14 @@ export default function App() {
         </KeyboardAvoidingView>
       </SafeAreaView>
 
-      <Modal visible={settingsVisible} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+      <Modal visible={settingsVisible} animationType="slide" transparent onRequestClose={() => setSettingsVisible(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setSettingsVisible(false)}>
+          <Pressable
+            style={styles.modalCard}
+            onPress={(event) => {
+              event.stopPropagation();
+            }}
+          >
             <Text style={styles.modalTitle}>{copy.settingsTitle}</Text>
             <Text style={styles.modalSubtitle}>{copy.settingsSubtitle}</Text>
 
@@ -1333,22 +1328,24 @@ export default function App() {
               <Text style={styles.sectionLabel}>{copy.generalSection}</Text>
 
               <Text style={styles.fieldLabel}>{copy.language}</Text>
-              <View style={styles.binaryRow}>
+              <View style={styles.settingOptionGroup}>
                 <Pressable
-                  style={[styles.binaryChip, draftLanguage === 'zh' && styles.selectedChip]}
-                  onPress={() => setDraftLanguage('zh')}
+                  style={[styles.settingOption, uiLanguage === 'zh' && styles.settingOptionSelected]}
+                  onPress={() => applyUiLanguage('zh')}
                 >
-                  <Text style={[styles.binaryChipText, draftLanguage === 'zh' && styles.selectedChipText]}>
-                    {copy.chinese}
-                  </Text>
+                  <View style={[styles.settingOptionRadio, uiLanguage === 'zh' && styles.settingOptionRadioSelected]}>
+                    {uiLanguage === 'zh' && <View style={styles.settingOptionRadioDot} />}
+                  </View>
+                  <Text style={styles.settingOptionText}>{copy.chinese}</Text>
                 </Pressable>
                 <Pressable
-                  style={[styles.binaryChip, draftLanguage === 'en' && styles.selectedChip]}
-                  onPress={() => setDraftLanguage('en')}
+                  style={[styles.settingOption, uiLanguage === 'en' && styles.settingOptionSelected]}
+                  onPress={() => applyUiLanguage('en')}
                 >
-                  <Text style={[styles.binaryChipText, draftLanguage === 'en' && styles.selectedChipText]}>
-                    {copy.english}
-                  </Text>
+                  <View style={[styles.settingOptionRadio, uiLanguage === 'en' && styles.settingOptionRadioSelected]}>
+                    {uiLanguage === 'en' && <View style={styles.settingOptionRadioDot} />}
+                  </View>
+                  <Text style={styles.settingOptionText}>{copy.english}</Text>
                 </Pressable>
               </View>
 
@@ -1383,22 +1380,18 @@ export default function App() {
               </Pressable>
               <Text style={styles.inlineHint}>{copy.clearLocalHint}</Text>
             </ScrollView>
-
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalGhost} onPress={() => setSettingsVisible(false)}>
-                <Text style={styles.modalGhostText}>{copy.close}</Text>
-              </Pressable>
-              <Pressable style={styles.modalPrimary} onPress={handleSaveSettings} disabled={savingProfile}>
-                <Text style={styles.modalPrimaryText}>{savingProfile ? copy.saving : copy.save}</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
 
-      <Modal visible={apiProfilesVisible} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+      <Modal visible={apiProfilesVisible} animationType="slide" transparent onRequestClose={() => setApiProfilesVisible(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setApiProfilesVisible(false)}>
+          <Pressable
+            style={styles.modalCard}
+            onPress={(event) => {
+              event.stopPropagation();
+            }}
+          >
             <View style={styles.sessionHeader}>
               <View style={styles.modalHeading}>
                 <Text style={styles.modalTitle}>{copy.apiProfilesTitle}</Text>
@@ -1484,12 +1477,12 @@ export default function App() {
                         draftProfile.apiProtocol === protocol && styles.selectedChipText,
                       ]}
                     >
-                      {apiProtocolLabel(protocol, draftLanguage)}
+                      {apiProtocolLabel(protocol, uiLanguage)}
                     </Text>
                   </Pressable>
                 ))}
               </ScrollView>
-              <Text style={styles.inlineHint}>{getEndpointHint(draftProfile.apiProtocol, draftLanguage)}</Text>
+              <Text style={styles.inlineHint}>{getEndpointHint(draftProfile.apiProtocol, uiLanguage)}</Text>
 
               <Text style={styles.fieldLabel}>{copy.baseUrl}</Text>
               <TextInput
@@ -1500,8 +1493,8 @@ export default function App() {
                 placeholder="https://api.openai.com/v1"
                 placeholderTextColor="#9BA7B7"
               />
-              <Text style={styles.inlineHint}>{COPY[draftLanguage].baseUrlHint}</Text>
-              {usingInsecureHttp && <Text style={styles.warningText}>{COPY[draftLanguage].insecureHttpWarning}</Text>}
+              <Text style={styles.inlineHint}>{copy.baseUrlHint}</Text>
+              {usingInsecureHttp && <Text style={styles.warningText}>{copy.insecureHttpWarning}</Text>}
 
               <Text style={styles.fieldLabel}>{copy.apiKey}</Text>
               <TextInput
@@ -1536,7 +1529,7 @@ export default function App() {
                   </Pressable>
                 ))}
               </ScrollView>
-              <Text style={styles.inlineHint}>{getModelHint(draftProfile.model, draftLanguage)}</Text>
+              <Text style={styles.inlineHint}>{getModelHint(draftProfile.model, uiLanguage)}</Text>
 
               <Text style={styles.fieldLabel}>{copy.reasoningEffort}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
@@ -1558,7 +1551,7 @@ export default function App() {
                 ))}
               </ScrollView>
               <Text style={styles.inlineHint}>
-                {getReasoningEffortHint(draftProfile.model, draftProfile.reasoningEffort, draftLanguage)}
+                {getReasoningEffortHint(draftProfile.model, draftProfile.reasoningEffort, uiLanguage)}
               </Text>
 
               {draftProfile.apiProtocol === 'responses' && (
@@ -1585,7 +1578,7 @@ export default function App() {
                 </>
               )}
               <Text style={styles.inlineHint}>
-                {getProtocolStorageHint(draftProfile.apiProtocol, draftProfile.storeResponses, draftLanguage)}
+                {getProtocolStorageHint(draftProfile.apiProtocol, draftProfile.storeResponses, uiLanguage)}
               </Text>
 
               <Text style={styles.fieldLabel}>{copy.projectId}</Text>
@@ -1647,13 +1640,18 @@ export default function App() {
                 <Text style={styles.modalPrimaryText}>{savingProfile ? copy.saving : copy.done}</Text>
               </Pressable>
             </View>
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
 
-      <Modal visible={sessionsVisible} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+      <Modal visible={sessionsVisible} animationType="slide" transparent onRequestClose={() => setSessionsVisible(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setSessionsVisible(false)}>
+          <Pressable
+            style={styles.modalCard}
+            onPress={(event) => {
+              event.stopPropagation();
+            }}
+          >
             <View style={styles.sessionHeader}>
               <Text style={styles.modalTitle}>{copy.sessionsTitle}</Text>
               <Pressable style={styles.modalPrimarySmall} onPress={createNewSession}>
@@ -1704,13 +1702,8 @@ export default function App() {
                 ))
               )}
             </ScrollView>
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalGhost} onPress={() => setSessionsVisible(false)}>
-                <Text style={styles.modalGhostText}>{copy.done}</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
 
       <Modal visible={!!renamingConversation} animationType="fade" transparent>
@@ -2006,6 +1999,49 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+  },
+  settingOptionGroup: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+    backgroundColor: '#F8FAFC',
+    overflow: 'hidden',
+  },
+  settingOption: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  settingOptionSelected: {
+    backgroundColor: '#EFF6FF',
+  },
+  settingOptionRadio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  settingOptionRadioSelected: {
+    borderColor: '#2563EB',
+  },
+  settingOptionRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#2563EB',
+  },
+  settingOptionText: {
+    color: '#111827',
+    fontSize: 15,
+    fontWeight: '800',
   },
   quickActionsRow: {
     flexDirection: 'row',

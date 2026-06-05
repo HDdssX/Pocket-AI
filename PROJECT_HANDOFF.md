@@ -30,6 +30,8 @@ This file is for starting a fresh Codex conversation without losing project cont
   - `chatCompletions` for DeepSeek/OpenAI-compatible Chat Completions, appends `/chat/completions`.
 - DeepSeek preset uses `https://api.deepseek.com` and `deepseek-v4-flash`.
 - Message bubbles have a compact copy-only action; copy success changes the icon to a small check mark without a popup.
+- Message copy success uses a blue filled check icon without a popup.
+- Common LaTeX-style cryptography/math tokens such as `\times`, `\phi`, `\equiv`, `\mod`, and simple superscripts render as readable symbols while copied text stays original.
 - Credential-like text such as passwords, API keys, tokens, commands, paths, and URLs renders as a monospace horizontal block.
 - Composer avoids Android keyboard overlap better with `KeyboardAvoidingView`.
 - In-flight requests can be aborted by pressing the stop button.
@@ -37,6 +39,8 @@ This file is for starting a fresh Codex conversation without losing project cont
 - Assistant replies can include downloaded image/document URL attachments when links appear in provider output.
 - Android can receive images from the system share sheet and split-screen drag/drop; received image URIs are copied through the existing attachment pipeline into the pending composer queue.
 - The sessions modal supports local search, rename, delete, and Markdown copy export.
+- The sessions and settings modals close by tapping the dimmed backdrop; the sessions modal no longer has a bottom `Done` button.
+- Settings language selection is an option-list style control and updates/persists immediately; settings no longer has bottom close/save actions.
 - Common API errors are mapped into clearer user-facing tips for auth, model/endpoint mismatch, rate limits, timeout, network failure, and provider 5xx errors.
 
 ## Key Files
