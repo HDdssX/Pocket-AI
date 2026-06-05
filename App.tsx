@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   NativeEventEmitter,
   NativeModules,
+  PanResponder,
   Linking,
   Platform,
   Pressable,
@@ -14,6 +16,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
@@ -631,6 +634,7 @@ function formatConversationMarkdown(conversation: ConversationRecord): string {
 }
 
 export default function App() {
+  const { width: windowWidth } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
   const shouldScrollToBottomRef = useRef(true);
   const skipNextPersistRef = useRef(false);
@@ -641,6 +645,8 @@ export default function App() {
   const streamingConversationIdRef = useRef<string | null>(null);
   const reasoningEffortNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handledSharedImageUrisRef = useRef(new Set<string>());
+  const sessionDrawerTranslateX = useRef(new Animated.Value(0)).current;
+  const sessionDrawerHiddenOffsetRef = useRef(360);
   const [ready, setReady] = useState(false);
   const [persisted, setPersisted] = useState<PersistedState>(EMPTY_STATE);
   const [apiKey, setApiKey] = useState('');
@@ -676,6 +682,18 @@ export default function App() {
   );
   const renamingConversation =
     persisted.conversations.find((conversation) => conversation.id === renamingConversationId) ?? null;
+  sessionDrawerHiddenOffsetRef.current = Math.max(windowWidth, 320);
+  const sessionDrawerPanResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dx) > 24 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.25,
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx > 70) {
+          closeSessionsDrawer();
+        }
+      },
+    })
+  ).current;
 
   useEffect(() => {
     (async () => {
@@ -697,6 +715,19 @@ export default function App() {
     }
     savePersistedState(persisted).catch(() => undefined);
   }, [persisted, ready]);
+
+  useEffect(() => {
+    if (!sessionsVisible) {
+      return;
+    }
+    const hiddenOffset = sessionDrawerHiddenOffsetRef.current;
+    sessionDrawerTranslateX.setValue(-hiddenOffset);
+    Animated.timing(sessionDrawerTranslateX, {
+      toValue: 0,
+      duration: 190,
+      useNativeDriver: true,
+    }).start();
+  }, [sessionDrawerTranslateX, sessionsVisible, windowWidth]);
 
   useEffect(() => {
     if (!shouldScrollToBottomRef.current) {
@@ -1318,13 +1349,28 @@ export default function App() {
     setSettingsVisible(false);
   }
 
+  function closeSessionsDrawer() {
+    Animated.timing(sessionDrawerTranslateX, {
+      toValue: -sessionDrawerHiddenOffsetRef.current,
+      duration: 160,
+      useNativeDriver: true,
+    }).start(() => {
+      setSessionsVisible(false);
+    });
+  }
+
+  function openSettingsFromSessions() {
+    setSessionsVisible(false);
+    void openSettings();
+  }
+
   function openConversation(conversationId: string) {
     shouldScrollToBottomRef.current = true;
     setPersisted((current) => ({
       ...current,
       activeConversationId: conversationId,
     }));
-    setSessionsVisible(false);
+    closeSessionsDrawer();
   }
 
   function renameConversation(conversationId: string, title: string) {
@@ -2096,24 +2142,51 @@ export default function App() {
         </View>
       </Modal>
 
-      <Modal visible={sessionsVisible} animationType="slide" transparent onRequestClose={() => setSessionsVisible(false)}>
-        <View style={styles.drawerBackdrop}>
-          <View style={styles.sessionDrawer}>
-            <View style={styles.sessionHeader}>
-              <Text style={styles.modalTitle}>{copy.sessionsTitle}</Text>
-              <Pressable style={styles.modalPrimarySmall} onPress={createNewSession}>
-                <Text style={styles.modalPrimaryText}>{copy.newSession}</Text>
-              </Pressable>
+      <Modal visible={sessionsVisible} animationType="none" onRequestClose={closeSessionsDrawer}>
+        <Animated.View
+          style={[styles.drawerBackdrop, { transform: [{ translateX: sessionDrawerTranslateX }] }]}
+          {...sessionDrawerPanResponder.panHandlers}
+        >
+          <SafeAreaView style={styles.sessionDrawer}>
+            <View style={styles.drawerHeader}>
+              <Text style={styles.drawerTitle}>{copy.title}</Text>
+              <View style={styles.drawerHeaderActions}>
+                <Pressable
+                  style={styles.drawerAvatar}
+                  onPress={openSettingsFromSessions}
+                  accessibilityRole="button"
+                  accessibilityLabel={copy.settings}
+                >
+                  <Text style={styles.drawerAvatarText}>FA</Text>
+                </Pressable>
+              </View>
             </View>
+
             <TextInput
               value={sessionSearchQuery}
               onChangeText={setSessionSearchQuery}
-              style={[styles.fieldInput, styles.sessionSearchInput]}
+              style={styles.drawerSearchInput}
               placeholder={copy.sessionSearchPlaceholder}
               placeholderTextColor="#9BA7B7"
             />
+
+            <View style={styles.drawerNav}>
+              <Pressable
+                style={styles.drawerNavItem}
+                onPress={openSettingsFromSessions}
+                accessibilityRole="button"
+                accessibilityLabel={copy.settings}
+              >
+                <Text style={styles.drawerNavIcon}>...</Text>
+                <Text style={styles.drawerNavText}>{copy.settings}</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.drawerSectionLabel}>{copy.recordsSection}</Text>
+
             <ScrollView
-              style={styles.modalScroll}
+              style={styles.drawerHistoryScroll}
+              contentContainerStyle={styles.drawerHistoryContent}
               keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
@@ -2123,36 +2196,45 @@ export default function App() {
               ) : visibleConversations.length === 0 ? (
                 <Text style={styles.emptySessionText}>{copy.sessionsNoMatches}</Text>
               ) : (
-                visibleConversations.map((conversation) => (
-                  <View key={conversation.id} style={styles.sessionItem}>
-                    <Pressable style={styles.sessionMeta} onPress={() => openConversation(conversation.id)}>
-                      <Text style={styles.sessionTitle}>{conversation.title}</Text>
-                      <Text style={styles.sessionSubtitle}>
-                        {copy.sessionMeta(conversation.model, conversation.messages.length)}
-                      </Text>
-                    </Pressable>
-                    <View style={styles.sessionActions}>
-                      <Pressable onPress={() => promptRenameConversation(conversation)}>
-                        <Text style={styles.sessionActionText}>{copy.renameSession}</Text>
+                visibleConversations.map((conversation) => {
+                  const active = conversation.id === activeConversation?.id;
+                  return (
+                    <View key={conversation.id} style={[styles.drawerSessionItem, active && styles.drawerSessionItemActive]}>
+                      <Pressable style={styles.sessionMeta} onPress={() => openConversation(conversation.id)}>
+                        <Text style={styles.drawerSessionTitle} numberOfLines={1}>
+                          {conversation.title}
+                        </Text>
+                        <Text style={styles.drawerSessionSubtitle} numberOfLines={1}>
+                          {copy.sessionMeta(conversation.model, conversation.messages.length)}
+                        </Text>
                       </Pressable>
-                      <Pressable
-                        onPress={() => {
-                          void copyConversationExport(conversation);
-                        }}
-                      >
-                        <Text style={styles.sessionActionText}>{copy.exportSession}</Text>
-                      </Pressable>
-                      <Pressable onPress={() => confirmDeleteConversation(conversation.id)}>
-                        <Text style={styles.deleteText}>{copy.delete}</Text>
-                      </Pressable>
+                      <View style={styles.drawerSessionActions}>
+                        <Pressable onPress={() => promptRenameConversation(conversation)}>
+                          <Text style={styles.sessionActionText}>{copy.renameSession}</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => {
+                            void copyConversationExport(conversation);
+                          }}
+                        >
+                          <Text style={styles.sessionActionText}>{copy.exportSession}</Text>
+                        </Pressable>
+                        <Pressable onPress={() => confirmDeleteConversation(conversation.id)}>
+                          <Text style={styles.deleteText}>{copy.delete}</Text>
+                        </Pressable>
+                      </View>
                     </View>
-                  </View>
-                ))
+                  );
+                })
               )}
             </ScrollView>
-          </View>
-          <Pressable style={styles.drawerDismissArea} onPress={() => setSessionsVisible(false)} />
-        </View>
+
+            <Pressable style={styles.drawerNewChatButton} onPress={createNewSession}>
+              <Text style={styles.drawerNewChatIcon}>+</Text>
+              <Text style={styles.drawerNewChatText}>{copy.newSession}</Text>
+            </Pressable>
+          </SafeAreaView>
+        </Animated.View>
       </Modal>
 
       <Modal visible={!!renamingConversation} animationType="fade" transparent>
@@ -2411,19 +2493,12 @@ const styles = StyleSheet.create({
   },
   drawerBackdrop: {
     flex: 1,
-    flexDirection: 'row',
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    backgroundColor: '#FFFFFF',
   },
   sessionDrawer: {
-    width: '86%',
-    maxWidth: 380,
-    height: '100%',
+    flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 18,
-    paddingTop: Platform.OS === 'android' ? 30 : 44,
-    paddingBottom: 22,
-    borderRightWidth: 1,
-    borderRightColor: '#E2E8F0',
+    paddingTop: Platform.OS === 'android' ? 20 : 8,
   },
   drawerDismissArea: {
     flex: 1,
@@ -2573,8 +2648,142 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '800',
   },
-  sessionSearchInput: {
-    marginTop: 16,
+  drawerHeader: {
+    minHeight: 62,
+    paddingHorizontal: 22,
+    paddingTop: 8,
+    paddingBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  drawerTitle: {
+    flex: 1,
+    color: '#0F172A',
+    fontSize: 30,
+    fontWeight: '900',
+  },
+  drawerHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  drawerAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#22C55E',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  drawerSearchInput: {
+    minHeight: 48,
+    marginHorizontal: 22,
+    marginTop: 10,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    color: '#111827',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    fontSize: 15,
+  },
+  drawerNav: {
+    paddingHorizontal: 14,
+    paddingTop: 18,
+  },
+  drawerNavItem: {
+    minHeight: 54,
+    borderRadius: 14,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  drawerNavIcon: {
+    width: 34,
+    color: '#111827',
+    fontSize: 24,
+    fontWeight: '900',
+    textAlign: 'center',
+    lineHeight: 28,
+  },
+  drawerNavText: {
+    color: '#111827',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  drawerSectionLabel: {
+    color: '#111827',
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 26,
+    marginBottom: 8,
+    paddingHorizontal: 22,
+  },
+  drawerHistoryScroll: {
+    flex: 1,
+  },
+  drawerHistoryContent: {
+    paddingBottom: 108,
+  },
+  drawerSessionItem: {
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    minHeight: 74,
+  },
+  drawerSessionItemActive: {
+    backgroundColor: '#F1F5F9',
+  },
+  drawerSessionTitle: {
+    color: '#111827',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  drawerSessionSubtitle: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 5,
+  },
+  drawerSessionActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginTop: 9,
+  },
+  drawerNewChatButton: {
+    position: 'absolute',
+    right: 24,
+    bottom: Platform.OS === 'android' ? 26 : 34,
+    minHeight: 58,
+    borderRadius: 29,
+    backgroundColor: '#111827',
+    paddingHorizontal: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  drawerNewChatIcon: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '700',
+    lineHeight: 28,
+  },
+  drawerNewChatText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '900',
   },
   modelListContent: {
     paddingBottom: 10,
