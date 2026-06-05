@@ -186,3 +186,4 @@ When code changes are ready to publish privately, sync only the selected files f
 
 - React Native warns that `SafeAreaView` is deprecated and recommends `react-native-safe-area-context`. This is not currently breaking.
 - Android Gradle build requires Java 17+. This machine has used `D:\JAVA\jdk-21.0.2.13-hotspot`.
+- Release APK signing uses local-only `android/keystore.properties` pointing at `android/keystore/pocket-ai-release.keystore`. These files are intentionally ignored by Git and must be backed up offline before public release.

@@ -88,6 +88,8 @@ APK 输出位置：
 android/app/build/outputs/apk/release/app-release.apk
 ```
 
+Release 构建会读取本机 `android/keystore.properties` 和 `android/keystore/` 下的正式签名密钥。这两个文件不进 Git，首次发布后必须离线备份，否则后续同包名应用无法覆盖升级。
+
 ## 说明
 
 本项目计划保持私有/闭源。
