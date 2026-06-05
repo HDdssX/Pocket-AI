@@ -875,10 +875,10 @@ export default function App() {
     setChatMenuVisible(false);
     settingsReturnTargetRef.current = returnTarget;
     setDraftProfile(activeProfile);
-    setApiKey(await loadProfileApiKey(activeProfile.id));
     resetReasoningEffortInput();
     setSettingsSection('root');
     setSettingsVisible(true);
+    setApiKey(await loadProfileApiKey(activeProfile.id));
   }
 
   function closeSettingsPanel() {
@@ -887,11 +887,12 @@ export default function App() {
       duration: 160,
       useNativeDriver: true,
     }).start(() => {
-      setSettingsVisible(false);
-      setSettingsSection('root');
-      if (settingsReturnTargetRef.current === 'drawer') {
+      const shouldReturnToDrawer = settingsReturnTargetRef.current === 'drawer';
+      if (shouldReturnToDrawer) {
         setSessionsVisible(true);
       }
+      setSettingsVisible(false);
+      setSettingsSection('root');
       settingsReturnTargetRef.current = 'chat';
     });
   }
@@ -1454,7 +1455,6 @@ export default function App() {
   }
 
   function openSettingsFromSessions() {
-    setSessionsVisible(false);
     void openSettings('drawer');
   }
 
