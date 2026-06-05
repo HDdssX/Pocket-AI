@@ -879,7 +879,7 @@ export default function App() {
     settingsTouchHasClosedRef.current = false;
   }
 
-  function maybeCloseSettingsFromTouch(event: GestureResponderEvent): boolean {
+  function maybeNavigateSettingsFromTouch(event: GestureResponderEvent): boolean {
     const start = settingsTouchStartRef.current;
     if (!start || settingsTouchHasClosedRef.current) {
       return false;
@@ -888,16 +888,27 @@ export default function App() {
     const { pageX, pageY } = event.nativeEvent;
     const dx = pageX - start.x;
     const dy = pageY - start.y;
-    if (Math.abs(dx) > 72 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+    if (Math.abs(dx) <= 72 || Math.abs(dx) <= Math.abs(dy) * 1.25) {
+      return false;
+    }
+
+    if (settingsSection !== 'root' && dx > 0) {
+      settingsTouchHasClosedRef.current = true;
+      setSettingsSection('root');
+      return true;
+    }
+
+    if (settingsSection === 'root' && dx < 0) {
       settingsTouchHasClosedRef.current = true;
       closeSettingsPanel();
       return true;
     }
+
     return false;
   }
 
   function handleSettingsTouchMove(event: GestureResponderEvent) {
-    maybeCloseSettingsFromTouch(event);
+    maybeNavigateSettingsFromTouch(event);
   }
 
   function handleSettingsTouchEnd() {
@@ -1814,7 +1825,7 @@ export default function App() {
         <Animated.View
           style={[styles.settingsScreen, { transform: [{ translateX: settingsPanelTranslateX }] }]}
           onStartShouldSetResponderCapture={() => false}
-          onMoveShouldSetResponderCapture={(event) => maybeCloseSettingsFromTouch(event)}
+          onMoveShouldSetResponderCapture={(event) => maybeNavigateSettingsFromTouch(event)}
           onTouchStart={handleSettingsTouchStart}
           onTouchMove={handleSettingsTouchMove}
           onTouchEnd={handleSettingsTouchEnd}

@@ -10,6 +10,7 @@ This file is for starting a fresh Codex conversation without losing project cont
 - Package: `com.fanshanng.aichatpocket`
 - Main UI file: `App.tsx`
 - Native Android project exists in `android/`
+- When opening in Android Studio, open `E:\android\projects\ai-chat-pocket\android` and use the `Project` view if the Android view does not classify the Expo-generated Gradle layout cleanly.
 - Current UI theme: white/light mobile AI chat
 - Standalone APK workflow is preferred. Do not assume Metro or same-LAN development is needed for normal testing.
 - Current public release target: GitHub Release APK, not Google Play.
