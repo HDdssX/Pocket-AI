@@ -34,7 +34,6 @@ import {
   API_PRESETS,
   API_PROTOCOL_OPTIONS,
   apiProtocolLabel,
-  assistantLabel,
   classifyModel,
   COMMON_REASONING_EFFORT_OPTIONS,
   DEFAULT_LANGUAGE,
@@ -192,7 +191,7 @@ type LanguageCopy = {
   clearFailedFallback: string;
   loading: string;
   sessionCount: (count: number) => string;
-  sessionMeta: (assistant: string, model: string, count: number) => string;
+  sessionMeta: (model: string, count: number) => string;
 };
 
 type SharedImageNativeModule = {
@@ -300,7 +299,7 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     sending: '发送中...',
     queuedAttachments: '待发送附件',
     emptyStateTitle: '开始对话',
-    emptyStateBody: '支持文本、图片和文件输入。会话历史保存在本机，界面会根据模型名标记为 Codex 或 CLI。',
+    emptyStateBody: '支持文本、图片和文件输入。会话历史保存在本机，可随时管理 API 配置和本地会话。',
     noActiveSessionTitle: '还没有激活会话',
     noActiveSessionBody: '先新建一个会话，保存 API key，然后就可以开始聊天。',
     imagePickerFailed: '选择图片失败',
@@ -325,7 +324,7 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     clearFailedFallback: '无法清空本地数据。',
     loading: '正在载入本地聊天数据...',
     sessionCount: (count) => `${count} 个会话`,
-    sessionMeta: (assistant, model, count) => `${assistant} | ${model} | ${count} 条消息`,
+    sessionMeta: (model, count) => `${model} | ${count} 条消息`,
   },
   en: {
     eyebrow: 'LOCAL-FIRST AI CHAT',
@@ -422,7 +421,7 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     sending: 'Sending...',
     queuedAttachments: 'Queued attachments',
     emptyStateTitle: 'Start chatting',
-    emptyStateBody: 'Use text, images, or files. Chat history stays on-device, and the UI tags sessions as Codex or CLI based on the model name.',
+    emptyStateBody: 'Use text, images, or files. Chat history stays on-device, with local session and API profile management.',
     noActiveSessionTitle: 'No active session',
     noActiveSessionBody: 'Create a session, save an API key, and start chatting.',
     imagePickerFailed: 'Image picker failed',
@@ -447,7 +446,7 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     clearFailedFallback: 'Unable to clear local data.',
     loading: 'Loading local chat vault...',
     sessionCount: (count) => `${count} sessions`,
-    sessionMeta: (assistant, model, count) => `${assistant} | ${model} | ${count} messages`,
+    sessionMeta: (model, count) => `${model} | ${count} messages`,
   },
 };
 
@@ -1262,7 +1261,6 @@ export default function App() {
     );
   }
 
-  const detectedKind = classifyModel(activeProfile.model);
   const composerDisabled = sending;
   const canSend = !!composerText.trim() || pendingAttachments.length > 0;
   const usingInsecureHttp = draftProfile.baseUrl.trim().toLowerCase().startsWith('http://');
@@ -1288,7 +1286,7 @@ export default function App() {
             <Pressable style={styles.sessionSwitcher} onPress={() => setSessionsVisible(true)}>
               <Text style={styles.title}>{copy.title}</Text>
               <Text style={styles.sessionLine} numberOfLines={1}>
-                {activeSessionTitle} · {assistantLabel(detectedKind)} · {activeProfile.label} · {activeProfile.model}
+                {activeSessionTitle} · {activeProfile.label} · {activeProfile.model}
               </Text>
             </Pressable>
             <View style={styles.topActions}>
@@ -1828,11 +1826,7 @@ export default function App() {
                     <Pressable style={styles.sessionMeta} onPress={() => openConversation(conversation.id)}>
                       <Text style={styles.sessionTitle}>{conversation.title}</Text>
                       <Text style={styles.sessionSubtitle}>
-                        {copy.sessionMeta(
-                          assistantLabel(conversation.assistantKind),
-                          conversation.model,
-                          conversation.messages.length
-                        )}
+                        {copy.sessionMeta(conversation.model, conversation.messages.length)}
                       </Text>
                     </Pressable>
                     <View style={styles.sessionActions}>

@@ -77,10 +77,6 @@ export function classifyModel(model: string): AssistantKind {
   return /codex/i.test(model) ? 'codex' : 'cli';
 }
 
-export function assistantLabel(kind: AssistantKind): string {
-  return kind === 'codex' ? 'Codex' : 'CLI';
-}
-
 export function getModelHint(model: string, language: UiLanguage = 'en'): string {
   if (/codex-mini-latest/i.test(model)) {
     return language === 'zh'
