@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Pocket AI",
+    "slug": "ai-chat-pocket",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fanshanng.aichatpocket",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Pick images to send to the model.",
+        "NSPhotoLibraryAddUsageDescription": "Save local previews and imported images for chat history.",
+        "NSFaceIDUsageDescription": "Secure local API key storage may use device authentication."
+      }
+    },
+    "android": {
+      "package": "com.fanshanng.aichatpocket",
+      "adaptiveIcon": {
+        "backgroundColor": "#0C1422",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Pick images to send in chat."
+        }
+      ],
+      "expo-document-picker",
+      "expo-secure-store"
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

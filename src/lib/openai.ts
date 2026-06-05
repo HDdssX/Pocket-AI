@@ -1,0 +1,561 @@
+import type { ApiProfile, AttachmentRecord, ChatMessage, ConversationRecord } from '../types';
+import { fetch as expoFetch } from 'expo/fetch';
+
+import {
+  extractDownloadableUrls,
+  persistRemoteAttachment,
+  readAttachmentAsDataUrl,
+} from './files';
+import { modelSupportsReasoning } from './models';
+
+type ResponsesInputItem = {
+  role: 'user' | 'assistant' | 'system';
+  content:
+    | string
+    | Array<
+        | { type: 'input_text'; text: string }
+        | { type: 'input_image'; image_url: string }
+        | { type: 'input_file'; filename: string; file_data: string }
+      >;
+};
+
+type ChatCompletionMessage = {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+};
+
+type RequestOptions = {
+  profile: ApiProfile;
+  apiKey: string;
+  conversation: ConversationRecord;
+  nextUserMessage: ChatMessage;
+  signal?: AbortSignal;
+  onTextDelta?: (delta: string) => void;
+};
+
+type ResponseTurn = {
+  assistantText: string;
+  responseId: string;
+  attachments: AttachmentRecord[];
+};
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '');
+}
+
+function buildHeaders(profile: ApiProfile, apiKey: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+  };
+
+  if (profile.apiProtocol === 'responses' && profile.projectId.trim()) {
+    headers['OpenAI-Project'] = profile.projectId.trim();
+  }
+  if (profile.apiProtocol === 'responses' && profile.organization.trim()) {
+    headers['OpenAI-Organization'] = profile.organization.trim();
+  }
+  return headers;
+}
+
+function buildReasoning(profile: ApiProfile): { effort: ApiProfile['reasoningEffort'] } | undefined {
+  if (!modelSupportsReasoning(profile.model)) {
+    return undefined;
+  }
+
+  return { effort: profile.reasoningEffort };
+}
+
+function isDeepSeekChatModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return normalized.startsWith('deepseek-v4') || normalized === 'deepseek-reasoner' || normalized === 'deepseek-chat';
+}
+
+function buildResponsesRequestBody(
+  profile: ApiProfile,
+  input: ResponsesInputItem[],
+  previousResponseId?: string | null,
+  stream = false
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: profile.model.trim(),
+    store: profile.storeResponses,
+    stream,
+    input,
+  };
+
+  if (previousResponseId) {
+    body.previous_response_id = previousResponseId;
+  }
+
+  const reasoning = buildReasoning(profile);
+  if (reasoning) {
+    body.reasoning = reasoning;
+  }
+
+  return body;
+}
+
+function buildChatCompletionRequestBody(
+  profile: ApiProfile,
+  messages: ChatCompletionMessage[],
+  stream = false
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: profile.model.trim(),
+    messages,
+    stream,
+  };
+
+  if (isDeepSeekChatModel(profile.model) && profile.reasoningEffort !== 'none') {
+    body.reasoning_effort = profile.reasoningEffort === 'xhigh' ? 'max' : 'high';
+    body.thinking = { type: 'enabled' };
+  } else if (isDeepSeekChatModel(profile.model)) {
+    body.thinking = { type: 'disabled' };
+  }
+
+  return body;
+}
+
+async function messageToInput(message: ChatMessage): Promise<ResponsesInputItem> {
+  const trimmedText = message.text.trim();
+  if (message.attachments.length === 0) {
+    return {
+      role: message.role,
+      content: trimmedText || '...',
+    };
+  }
+
+  const content: Extract<ResponsesInputItem['content'], Array<unknown>> = [];
+  if (trimmedText) {
+    content.push({ type: 'input_text', text: trimmedText });
+  }
+
+  for (const attachment of message.attachments) {
+    const dataUrl = await readAttachmentAsDataUrl(attachment);
+    if (attachment.kind === 'image') {
+      content.push({ type: 'input_image', image_url: dataUrl });
+    } else {
+      content.push({
+        type: 'input_file',
+        filename: attachment.name,
+        file_data: dataUrl,
+      });
+    }
+  }
+
+  if (content.length === 0) {
+    content.push({ type: 'input_text', text: '...' });
+  }
+
+  return {
+    role: message.role,
+    content,
+  };
+}
+
+async function messageToChatCompletionMessage(message: ChatMessage): Promise<ChatCompletionMessage> {
+  const trimmedText = message.text.trim();
+  if (message.attachments.length === 0) {
+    return {
+      role: message.role,
+      content: trimmedText || '...',
+    };
+  }
+
+  const content: string[] = [];
+  if (trimmedText) {
+    content.push(trimmedText);
+  }
+
+  const attachmentNames = message.attachments.map((attachment) => `${attachment.kind}: ${attachment.name}`);
+  content.push(
+    `[Attachments not sent in Chat Completions mode: ${attachmentNames.join(', ')}. Please answer based on the text context only.]`
+  );
+
+  if (content.length === 0) {
+    content.push('...');
+  }
+
+  return {
+    role: message.role,
+    content: content.join('\n\n'),
+  };
+}
+
+async function buildFullInput(
+  conversation: ConversationRecord,
+  nextUserMessage: ChatMessage,
+  systemPrompt: string
+): Promise<ResponsesInputItem[]> {
+  const input: ResponsesInputItem[] = [];
+  if (systemPrompt.trim()) {
+    input.push({
+      role: 'system',
+      content: systemPrompt.trim(),
+    });
+  }
+
+  for (const message of conversation.messages) {
+    input.push(await messageToInput(message));
+  }
+  input.push(await messageToInput(nextUserMessage));
+  return input;
+}
+
+async function buildFullChatCompletionMessages(
+  conversation: ConversationRecord,
+  nextUserMessage: ChatMessage,
+  systemPrompt: string
+): Promise<ChatCompletionMessage[]> {
+  const messages: ChatCompletionMessage[] = [];
+  if (systemPrompt.trim()) {
+    messages.push({
+      role: 'system',
+      content: systemPrompt.trim(),
+    });
+  }
+
+  for (const message of conversation.messages) {
+    messages.push(await messageToChatCompletionMessage(message));
+  }
+  messages.push(await messageToChatCompletionMessage(nextUserMessage));
+  return messages;
+}
+
+function extractResponsesAssistantText(payload: any): string {
+  if (typeof payload?.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text;
+  }
+
+  const outputs = Array.isArray(payload?.output) ? payload.output : [];
+  const chunks: string[] = [];
+  for (const item of outputs) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (typeof part?.text === 'string') {
+        chunks.push(part.text);
+      }
+    }
+  }
+  return chunks.join('\n').trim();
+}
+
+function extractResponsesOutputAttachments(payload: any): Array<{ url: string; name?: string; mimeType?: string }> {
+  const outputs = Array.isArray(payload?.output) ? payload.output : [];
+  const attachments: Array<{ url: string; name?: string; mimeType?: string }> = [];
+
+  for (const item of outputs) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      const url = part?.image_url || part?.url || part?.file_url;
+      if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+        attachments.push({
+          url,
+          name: typeof part?.filename === 'string' ? part.filename : undefined,
+          mimeType: typeof part?.mime_type === 'string' ? part.mime_type : undefined,
+        });
+      }
+    }
+  }
+
+  return attachments;
+}
+
+function extractChatCompletionAssistantText(payload: any): string {
+  const choices = Array.isArray(payload?.choices) ? payload.choices : [];
+  const chunks: string[] = [];
+  for (const choice of choices) {
+    const content = choice?.message?.content;
+    if (typeof content === 'string') {
+      chunks.push(content);
+    }
+  }
+  return chunks.join('\n').trim();
+}
+
+async function collectAssistantAttachments(
+  assistantText: string,
+  explicitAttachments: Array<{ url: string; name?: string; mimeType?: string }> = []
+): Promise<AttachmentRecord[]> {
+  const candidates = [
+    ...explicitAttachments,
+    ...extractDownloadableUrls(assistantText).map((url) => ({ url })),
+  ];
+  const unique = new Map(candidates.map((item) => [item.url, item]));
+  const attachments: AttachmentRecord[] = [];
+
+  for (const item of unique.values()) {
+    const attachment = await persistRemoteAttachment(item);
+    if (attachment) {
+      attachments.push(attachment);
+    }
+  }
+
+  return attachments;
+}
+
+async function requestJson(url: string, init: RequestInit): Promise<any> {
+  const response = await expoFetch(url, init);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.message || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function appendSseChunk(buffer: string, chunk: string): string {
+  return buffer + chunk.replace(/\r/g, '');
+}
+
+function parseSseEvents(buffer: string): { events: string[]; rest: string } {
+  const events: string[] = [];
+  let rest = buffer;
+  let index = rest.indexOf('\n\n');
+
+  while (index >= 0) {
+    const rawEvent = rest.slice(0, index);
+    rest = rest.slice(index + 2);
+    const data = rawEvent
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n');
+
+    if (data) {
+      events.push(data);
+    }
+    index = rest.indexOf('\n\n');
+  }
+
+  return { events, rest };
+}
+
+function extractResponsesStreamDelta(payload: any): string {
+  if (typeof payload?.delta === 'string') {
+    return payload.delta;
+  }
+  if (typeof payload?.text === 'string' && /delta/i.test(String(payload?.type ?? ''))) {
+    return payload.text;
+  }
+  if (typeof payload?.output_text === 'string' && /delta/i.test(String(payload?.type ?? ''))) {
+    return payload.output_text;
+  }
+  const content = payload?.item?.content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+      .join('');
+  }
+  return '';
+}
+
+function extractChatCompletionStreamDelta(payload: any): string {
+  const choices = Array.isArray(payload?.choices) ? payload.choices : [];
+  return choices
+    .map((choice: any) => choice?.delta?.content)
+    .filter((value: unknown): value is string => typeof value === 'string')
+    .join('');
+}
+
+async function requestStream(
+  url: string,
+  init: RequestInit,
+  extractDelta: (payload: any) => string,
+  onTextDelta?: (delta: string) => void
+): Promise<{ text: string; id: string; finalPayload: any | null }> {
+  const response = await expoFetch(url, init);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const message = payload?.error?.message || payload?.message || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('Streaming is not available in this runtime.');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  let id = '';
+  let finalPayload: any | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer = appendSseChunk(buffer, decoder.decode(value, { stream: true }));
+    const parsed = parseSseEvents(buffer);
+    buffer = parsed.rest;
+
+    for (const event of parsed.events) {
+      if (event === '[DONE]') {
+        continue;
+      }
+
+      const payload = JSON.parse(event);
+      finalPayload = payload;
+      if (typeof payload?.id === 'string') {
+        id = payload.id;
+      }
+
+      const delta = extractDelta(payload);
+      if (delta) {
+        text += delta;
+        onTextDelta?.(delta);
+      }
+    }
+  }
+
+  return { text, id, finalPayload };
+}
+
+export async function createAssistantTurn(options: RequestOptions): Promise<ResponseTurn> {
+  const { profile, apiKey, conversation, nextUserMessage, signal, onTextDelta } = options;
+  const headers = buildHeaders(profile, apiKey);
+
+  if (profile.apiProtocol === 'chatCompletions') {
+    const messages = await buildFullChatCompletionMessages(conversation, nextUserMessage, profile.systemPrompt);
+    try {
+      const streamed = await requestStream(
+        `${normalizeBaseUrl(profile.baseUrl)}/chat/completions`,
+        {
+          method: 'POST',
+          headers,
+          signal,
+          body: JSON.stringify(buildChatCompletionRequestBody(profile, messages, true)),
+        },
+        extractChatCompletionStreamDelta,
+        onTextDelta
+      );
+
+      return {
+        assistantText: streamed.text,
+        responseId: streamed.id,
+        attachments: await collectAssistantAttachments(streamed.text),
+      };
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+    }
+
+    const payload = await requestJson(`${normalizeBaseUrl(profile.baseUrl)}/chat/completions`, {
+      method: 'POST',
+      headers,
+      signal,
+      body: JSON.stringify(buildChatCompletionRequestBody(profile, messages, false)),
+    });
+
+    const assistantText = extractChatCompletionAssistantText(payload);
+    return {
+      assistantText,
+      responseId: payload.id ?? '',
+      attachments: await collectAssistantAttachments(assistantText),
+    };
+  }
+
+  const url = `${normalizeBaseUrl(profile.baseUrl)}/responses`;
+
+  const attemptWithChain = async (): Promise<ResponseTurn> => {
+    try {
+      const streamed = await requestStream(
+        url,
+        {
+          method: 'POST',
+          headers,
+          signal,
+          body: JSON.stringify(
+            buildResponsesRequestBody(profile, [await messageToInput(nextUserMessage)], conversation.previousResponseId, true)
+          ),
+        },
+        extractResponsesStreamDelta,
+        onTextDelta
+      );
+
+      return {
+        assistantText: streamed.text,
+        responseId: streamed.id,
+        attachments: await collectAssistantAttachments(streamed.text),
+      };
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+    }
+
+    const payload = await requestJson(url, {
+      method: 'POST',
+      headers,
+      signal,
+      body: JSON.stringify(
+        buildResponsesRequestBody(profile, [await messageToInput(nextUserMessage)], conversation.previousResponseId)
+      ),
+    });
+
+    const assistantText = extractResponsesAssistantText(payload);
+    return {
+      assistantText,
+      responseId: payload.id,
+      attachments: await collectAssistantAttachments(assistantText, extractResponsesOutputAttachments(payload)),
+    };
+  };
+
+  const attemptFullContext = async (): Promise<ResponseTurn> => {
+    const fullInput = await buildFullInput(conversation, nextUserMessage, profile.systemPrompt);
+    try {
+      const streamed = await requestStream(
+        url,
+        {
+          method: 'POST',
+          headers,
+          signal,
+          body: JSON.stringify(buildResponsesRequestBody(profile, fullInput, null, true)),
+        },
+        extractResponsesStreamDelta,
+        onTextDelta
+      );
+
+      return {
+        assistantText: streamed.text,
+        responseId: streamed.id,
+        attachments: await collectAssistantAttachments(streamed.text),
+      };
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+    }
+
+    const payload = await requestJson(url, {
+      method: 'POST',
+      headers,
+      signal,
+      body: JSON.stringify(
+        buildResponsesRequestBody(profile, fullInput)
+      ),
+    });
+
+    const assistantText = extractResponsesAssistantText(payload);
+    return {
+      assistantText,
+      responseId: payload.id,
+      attachments: await collectAssistantAttachments(assistantText, extractResponsesOutputAttachments(payload)),
+    };
+  };
+
+  if (profile.storeResponses && conversation.previousResponseId) {
+    try {
+      return await attemptWithChain();
+    } catch {
+      return await attemptFullContext();
+    }
+  }
+
+  return await attemptFullContext();
+}
