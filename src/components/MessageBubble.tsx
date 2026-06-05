@@ -85,7 +85,30 @@ function TechnicalTextBlock({ text }: { text: string }) {
 }
 
 function trimCodeBlockContent(content: string): string {
-  return content.endsWith('\n') ? content.slice(0, -1) : content;
+  let normalized = content.replace(/\r\n?/g, '\n');
+  if (normalized.endsWith('\n')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized.replace(/^(?:`{3,}|~{3,})\s*([A-Za-z0-9_+.#-]+)?\s*\n?/, '').replace(/\n?(?:`{3,}|~{3,})$/, '');
+}
+
+function normalizeMarkdownText(text: string): string {
+  let normalized = text
+    .replace(/\r\n?/g, '\n')
+    .replace(/\\`/g, '`')
+    .replace(/[｀´]/g, '`')
+    .replace(/(^|\n)([ \t]*)(`{3,}|~{3,})([A-Za-z0-9_+.#-]+)/g, '$1$2$3 $4')
+    .replace(/([^\n])(`{3,}|~{3,})([A-Za-z0-9_+.#-]*)/g, '$1\n$2$3')
+    .replace(/(`{3,}|~{3,})([A-Za-z0-9_+.#-]+)([^\n`~A-Za-z0-9_+.#-])/g, '$1 $2$3')
+    .replace(/(`{3,}|~{3,})([A-Za-z0-9_+.#-]*)([^\n`~\s])/g, '$1$2\n$3')
+    .replace(/(^|\n)(`{3,}|~{3,})\s*(\n|$)/g, '$1$2$3');
+
+  const fenceMatches = normalized.match(/(^|\n)(`{3,}|~{3,})/g);
+  if (fenceMatches && fenceMatches.length % 2 === 1) {
+    normalized = `${normalized.trimEnd()}\n\`\`\``;
+  }
+
+  return normalized;
 }
 
 function CodeBlock({
@@ -142,7 +165,8 @@ function MessageText({ message, isUser, language }: { message: ChatMessage; isUs
     return null;
   }
 
-  const displayText = applyContentPlugins(message.text, { message, language, isUser });
+  const normalizedText = normalizeMarkdownText(message.text);
+  const displayText = applyContentPlugins(normalizedText, { message, language, isUser });
 
   if (shouldUseTechnicalTextBlock(displayText)) {
     return <TechnicalTextBlock text={displayText} />;
@@ -233,7 +257,7 @@ export function MessageBubble({ message, language }: Props) {
           </View>
         )}
         {!!message.error && <Text style={styles.errorText}>{message.error}</Text>}
-        {!!copyableText.trim() && (
+        {isUser && !!copyableText.trim() && (
           <View style={styles.actionRow}>
             <Pressable style={[styles.copyAction, copied && styles.copyActionCopied]} onPress={copyMessage}>
               <CopyIcon done={copied} />

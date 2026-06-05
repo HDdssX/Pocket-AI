@@ -273,6 +273,27 @@ function extractResponsesAssistantText(payload: any): string {
     return payload.output_text;
   }
 
+  if (payload?.response) {
+    return extractResponsesAssistantText(payload.response);
+  }
+
+  if (payload?.item) {
+    return extractResponsesAssistantText(payload.item);
+  }
+
+  if (typeof payload?.part?.text === 'string') {
+    return payload.part.text.trim();
+  }
+
+  const directContent = Array.isArray(payload?.content) ? payload.content : [];
+  if (directContent.length > 0) {
+    return directContent
+      .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+
   const outputs = Array.isArray(payload?.output) ? payload.output : [];
   const chunks: string[] = [];
   for (const item of outputs) {
@@ -465,20 +486,18 @@ function parseSseEvents(buffer: string): { events: string[]; rest: string } {
 }
 
 function extractResponsesStreamDelta(payload: any): string {
+  const type = String(payload?.type ?? '');
   if (typeof payload?.delta === 'string') {
     return payload.delta;
   }
-  if (typeof payload?.text === 'string' && /delta/i.test(String(payload?.type ?? ''))) {
+  if (!/delta/i.test(type)) {
+    return '';
+  }
+  if (typeof payload?.text === 'string') {
     return payload.text;
   }
-  if (typeof payload?.output_text === 'string' && /delta/i.test(String(payload?.type ?? ''))) {
+  if (typeof payload?.output_text === 'string') {
     return payload.output_text;
-  }
-  const content = payload?.item?.content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => (typeof part?.text === 'string' ? part.text : ''))
-      .join('');
   }
   return '';
 }
@@ -750,10 +769,14 @@ export async function createAssistantTurn(options: RequestOptions): Promise<Resp
         onTextDelta
       );
 
+      const assistantText = streamed.text || extractResponsesAssistantText(streamed.finalPayload);
       return {
-        assistantText: streamed.text,
+        assistantText,
         responseId: streamed.id,
-        attachments: await collectAssistantAttachments(streamed.text),
+        attachments: await collectAssistantAttachments(
+          assistantText,
+          extractResponsesOutputAttachments(streamed.finalPayload)
+        ),
       };
     } catch (error) {
       if (signal?.aborted) {
@@ -794,10 +817,14 @@ export async function createAssistantTurn(options: RequestOptions): Promise<Resp
         onTextDelta
       );
 
+      const assistantText = streamed.text || extractResponsesAssistantText(streamed.finalPayload);
       return {
-        assistantText: streamed.text,
+        assistantText,
         responseId: streamed.id,
-        attachments: await collectAssistantAttachments(streamed.text),
+        attachments: await collectAssistantAttachments(
+          assistantText,
+          extractResponsesOutputAttachments(streamed.finalPayload)
+        ),
       };
     } catch (error) {
       if (signal?.aborted) {

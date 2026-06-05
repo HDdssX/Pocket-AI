@@ -71,6 +71,13 @@ const subscripts: Record<string, string> = {
 const latexEnvironments = 'cases|aligned|align|array|split|gathered|matrix|pmatrix|bmatrix';
 
 const replacements: Array<[RegExp, string]> = [
+  [/\\mathcal\s*\{?N\}?/g, '𝒩'],
+  [/\\mathcal\s*\{?([A-Za-z])\}?/g, '$1'],
+  [/\\mathbf\s*\{([^{}]*)\}/g, '$1'],
+  [/\\mathrm\s*\{([^{}]*)\}/g, '$1'],
+  [/\\mathit\s*\{([^{}]*)\}/g, '$1'],
+  [/\\operatorname\s*\{([^{}]*)\}/g, '$1'],
+  [/\\text\s*\{([^{}]*)\}/g, '$1'],
   [/\\oplus\b/g, '⊕'],
   [/\\otimes\b/g, '⊗'],
   [/\\land\b/g, '∧'],
@@ -97,10 +104,28 @@ const replacements: Array<[RegExp, string]> = [
   [/\\phi\b/g, 'φ'],
   [/\\varphi\b/g, 'φ'],
   [/\\Phi\b/g, 'Φ'],
+  [/\\Omega\b/g, 'Ω'],
+  [/\\omega\b/g, 'ω'],
+  [/\\rho\b/g, 'ρ'],
+  [/\\eta\b/g, 'η'],
+  [/\\varepsilon\b/g, 'ε'],
+  [/\\epsilon\b/g, 'ε'],
+  [/\\pi\b/g, 'π'],
+  [/\\sim\b/g, '~'],
+  [/\\quad\b/g, ' '],
   [/\\equiv\b/g, '≡'],
   [/\\neq\b/g, '≠'],
+  [/\\ne\b/g, '≠'],
   [/\\leq?\b/g, '≤'],
   [/\\geq?\b/g, '≥'],
+  [/\\in\b/g, '∈'],
+  [/\\notin\b/g, '∉'],
+  [/\\subseteq\b/g, '⊆'],
+  [/\\subset\b/g, '⊂'],
+  [/\\cup\b/g, '∪'],
+  [/\\cap\b/g, '∩'],
+  [/\\forall\b/g, '∀'],
+  [/\\exists\b/g, '∃'],
   [/\\lt\b/g, '<'],
   [/\\gt\b/g, '>'],
   [/\\approx\b/g, '≈'],
@@ -140,11 +165,6 @@ function normalizeLatexMathText(text: string): string {
     .replace(/\$([^$\n]+)\$/g, '$1')
     .replace(/\\\(([\s\S]*?)\\\)/g, '$1')
     .replace(/\\\[([\s\S]*?)\\\]/g, '$1')
-    .replace(/\\text\s*\{([^{}]*)\}/g, '$1')
-    .replace(/\\operatorname\s*\{([^{}]*)\}/g, '$1')
-    .replace(/\\mathrm\s*\{([^{}]*)\}/g, '$1')
-    .replace(/\\mathbf\s*\{([^{}]*)\}/g, '$1')
-    .replace(/\\mathit\s*\{([^{}]*)\}/g, '$1')
     .replace(/\\text([A-Za-z\u4e00-\u9fff]+)/g, '$1')
     .replace(/\\\\[ \t]*/g, '\n');
 
@@ -155,12 +175,33 @@ function normalizeLatexMathText(text: string): string {
   }
 
   return normalized
+    .replace(/\\sqrt\s*\{([^{}]+)\}/g, '√($1)')
+    .replace(/\\sqrt\s+([^\s{}]+)/g, '√$1')
+    .replace(/\\exp\s*\{([^{}]+)\}/g, 'exp($1)')
+    .replace(/\\exp\b/g, 'exp')
+    .replace(/\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '($1)/($2)')
+    .replace(/\\frac\s+([^\s{}]+)\s+([^\s{}]+)/g, '($1)/($2)')
+    .replace(/\bmathcal\s*\{?N\}?/g, '𝒩')
+    .replace(/\bmathcal([A-Za-z])\b/g, '$1')
+    .replace(/\bsqrt\s*\{([^{}]+)\}/g, '√($1)')
+    .replace(/\bsqrt\s*([0-9A-Za-zπσμ]+)/g, '√($1)')
+    .replace(/\bfrac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '($1)/($2)')
+    .replace(/\bfrac\s*([^{}\s]+)\s*\{\s*([^{}]+)\}/g, '($1)/($2)')
+    .replace(/\bfrac\s+([^\s{}]+)\s+([^\s{}]+)/g, '($1)/($2)')
+    .replace(/\bexp\s*\{([^{}]+)\}/g, 'exp($1)')
+    .replace(/\bpi\b/g, 'π')
+    .replace(/([A-Za-z0-9)\]])\s+sim\s+/g, '$1 ~ ')
+    .replace(/([A-Za-z0-9)\]])\s+in\s*([([{])/g, '$1 ∈ $2')
+    .replace(/\bquad\b/g, ' ')
     .replace(/\^\{([^{}]{1,12})\}/g, (_, value: string) => toScript(value, superscripts))
     .replace(/\^([0-9a-zA-Z])/g, (_, value: string) => toScript(value, superscripts))
     .replace(/_\{([^{}]{1,12})\}/g, (_, value: string) => toScript(value, subscripts))
     .replace(/_([0-9a-zA-Z])/g, (_, value: string) => toScript(value, subscripts))
     .replace(/\s*&=\s*/g, ' = ')
     .replace(/\s*&\s*/g, '  |  ')
+    .replace(/([([{])\s+/g, '$1')
+    .replace(/\s+([)\]}])/g, '$1')
+    .replace(/,\s*/g, ', ')
     .replace(/\s*\\\s*/g, ' ')
     .replace(/\s*\/\s*(?=end(?:cases|aligned|align|array|split|gathered|matrix|pmatrix|bmatrix)\b)/g, '\n')
     .replace(/\{([^{}]+)\}/g, '$1')
