@@ -20,6 +20,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import type { GestureResponderEvent } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -650,6 +651,8 @@ export default function App() {
   const sessionDrawerHiddenOffsetRef = useRef(360);
   const settingsPanelTranslateX = useRef(new Animated.Value(0)).current;
   const settingsPanelHiddenOffsetRef = useRef(360);
+  const settingsTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const settingsTouchHasClosedRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [persisted, setPersisted] = useState<PersistedState>(EMPTY_STATE);
   const [apiKey, setApiKey] = useState('');
@@ -695,20 +698,6 @@ export default function App() {
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dx > 70) {
           closeSessionsDrawer();
-        }
-      },
-    })
-  ).current;
-  const settingsPanelPanResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponderCapture: (_, gestureState) =>
-        Math.abs(gestureState.dx) > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.05,
-      onMoveShouldSetPanResponder: (_, gestureState) =>
-        Math.abs(gestureState.dx) > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.05,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx < -45) {
-          closeSettingsPanel();
         }
       },
     })
@@ -882,6 +871,38 @@ export default function App() {
       setSettingsVisible(false);
       setSettingsSection('root');
     });
+  }
+
+  function handleSettingsTouchStart(event: GestureResponderEvent) {
+    const { pageX, pageY } = event.nativeEvent;
+    settingsTouchStartRef.current = { x: pageX, y: pageY };
+    settingsTouchHasClosedRef.current = false;
+  }
+
+  function maybeCloseSettingsFromTouch(event: GestureResponderEvent): boolean {
+    const start = settingsTouchStartRef.current;
+    if (!start || settingsTouchHasClosedRef.current) {
+      return false;
+    }
+
+    const { pageX, pageY } = event.nativeEvent;
+    const dx = pageX - start.x;
+    const dy = pageY - start.y;
+    if (Math.abs(dx) > 72 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+      settingsTouchHasClosedRef.current = true;
+      closeSettingsPanel();
+      return true;
+    }
+    return false;
+  }
+
+  function handleSettingsTouchMove(event: GestureResponderEvent) {
+    maybeCloseSettingsFromTouch(event);
+  }
+
+  function handleSettingsTouchEnd() {
+    settingsTouchStartRef.current = null;
+    settingsTouchHasClosedRef.current = false;
   }
 
   function openApiProfiles() {
@@ -1792,7 +1813,12 @@ export default function App() {
       <Modal visible={settingsVisible} animationType="none" onRequestClose={closeSettingsPanel}>
         <Animated.View
           style={[styles.settingsScreen, { transform: [{ translateX: settingsPanelTranslateX }] }]}
-          {...settingsPanelPanResponder.panHandlers}
+          onStartShouldSetResponderCapture={() => false}
+          onMoveShouldSetResponderCapture={(event) => maybeCloseSettingsFromTouch(event)}
+          onTouchStart={handleSettingsTouchStart}
+          onTouchMove={handleSettingsTouchMove}
+          onTouchEnd={handleSettingsTouchEnd}
+          onTouchCancel={handleSettingsTouchEnd}
         >
           <SafeAreaView style={styles.settingsScreenSafe}>
             <View style={styles.settingsHeader}>
