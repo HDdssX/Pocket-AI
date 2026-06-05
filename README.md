@@ -46,34 +46,3 @@ OpenAI
 Base URL：https://api.openai.com/v1
 模型：gpt-5.4
 ```
-
-## 隐私
-
-- 用户自备 API Key，应用不内置官方密钥。
-- 用户输入、附件和上下文会发送到用户配置的 API 服务商或代理网关。
-- 卸载应用或清空本地数据会删除本机保存的聊天记录、配置和附件。
-- 本应用不是 OpenAI、DeepSeek 或其他模型服务商的官方产品。
-
-## 开发
-
-```powershell
-cd E:\android\projects\ai-chat-pocket
-npm install
-cmd /c node_modules\.bin\tsc.cmd --noEmit
-```
-
-构建正式签名 APK：
-
-```powershell
-cd E:\android\projects\ai-chat-pocket\android
-$env:JAVA_HOME='D:\JAVA\jdk-21.0.2.13-hotspot'
-cmd /c gradlew.bat assembleRelease
-```
-
-Release 构建需要本机存在 `android/keystore.properties` 和正式签名密钥文件；这些文件不进入 Git。
-
-## 作者
-
-- GitHub：https://github.com/fanshanng
-- 博客：https://fanshanng.cn/
-- 邮箱：fanshanng@gmail.com
