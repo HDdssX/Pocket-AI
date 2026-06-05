@@ -1,43 +1,12 @@
-import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import SyntaxHighlighter from 'react-native-syntax-highlighter';
-import { atomOneDark } from 'react-syntax-highlighter/styles/hljs';
 
 type Props = {
   code: string;
   language?: string;
+  deferHighlight?: boolean;
 };
-
-type HighlighterBoundaryProps = {
-  children: ReactNode;
-  code: string;
-};
-
-type HighlighterBoundaryState = {
-  hasError: boolean;
-};
-
-class HighlighterBoundary extends Component<HighlighterBoundaryProps, HighlighterBoundaryState> {
-  state: HighlighterBoundaryState = { hasError: false };
-
-  static getDerivedStateFromError(): HighlighterBoundaryState {
-    return { hasError: true };
-  }
-
-  componentDidUpdate(previousProps: HighlighterBoundaryProps) {
-    if (previousProps.code !== this.props.code && this.state.hasError) {
-      this.setState({ hasError: false });
-    }
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return <PlainCode code={this.props.code} />;
-    }
-    return this.props.children;
-  }
-}
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   csharp: 'csharp',
@@ -131,7 +100,13 @@ export function normalizeCodeLanguage(language?: string): string {
 
 function PlainCode({ code }: { code: string }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.codeScroll}>
+    <ScrollView
+      horizontal
+      nestedScrollEnabled
+      showsHorizontalScrollIndicator={false}
+      style={styles.codeScroll}
+      contentContainerStyle={styles.codeScrollContent}
+    >
       <Text selectable style={styles.plainCode}>
         {code || ' '}
       </Text>
@@ -139,7 +114,7 @@ function PlainCode({ code }: { code: string }) {
   );
 }
 
-export function CodeBlock({ code, language }: Props) {
+function CodeBlockComponent({ code, language }: Props) {
   const [copied, setCopied] = useState(false);
   const normalizedCode = code.replace(/\r\n?/g, '\n').replace(/\n$/, '');
   const resolvedLanguage = useMemo(
@@ -162,40 +137,26 @@ export function CodeBlock({ code, language }: Props) {
   return (
     <View style={styles.wrap}>
       <View style={styles.header}>
-        <Text style={styles.language}>{displayLanguage(resolvedLanguage)}</Text>
+        <Text style={styles.language} numberOfLines={1} ellipsizeMode="tail">
+          {displayLanguage(resolvedLanguage)}
+        </Text>
         <Pressable style={styles.copyButton} onPress={copyCode} accessibilityRole="button">
           <Text style={styles.copyText}>{copied ? 'Copied' : 'Copy'}</Text>
         </Pressable>
       </View>
-      <HighlighterBoundary code={normalizedCode}>
-        <SyntaxHighlighter
-          language={resolvedLanguage === 'text' ? undefined : resolvedLanguage}
-          style={atomOneDark}
-          highlighter="hljs"
-          fontFamily="monospace"
-          fontSize={13}
-          PreTag={ScrollView}
-          CodeTag={ScrollView}
-          customStyle={syntaxStyle}
-        >
-          {normalizedCode || ' '}
-        </SyntaxHighlighter>
-      </HighlighterBoundary>
+      <PlainCode code={normalizedCode} />
     </View>
   );
 }
 
-const syntaxStyle = {
-  margin: 0,
-  paddingHorizontal: 12,
-  paddingVertical: 12,
-  backgroundColor: '#0B1220',
-  minWidth: 40,
-};
+export const CodeBlock = memo(CodeBlockComponent);
 
 const styles = StyleSheet.create({
   wrap: {
+    width: '100%',
+    minWidth: 240,
     maxWidth: '100%',
+    alignSelf: 'stretch',
     borderRadius: 14,
     backgroundColor: '#0B1220',
     marginTop: 4,
@@ -215,14 +176,17 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1F2937',
   },
   language: {
+    flexShrink: 1,
+    marginRight: 12,
     color: '#D1D5DB',
     fontSize: 12,
     fontWeight: '800',
   },
   copyButton: {
+    flexShrink: 0,
     minHeight: 30,
     justifyContent: 'center',
-    paddingLeft: 14,
+    paddingLeft: 8,
   },
   copyText: {
     color: '#93C5FD',
@@ -231,6 +195,10 @@ const styles = StyleSheet.create({
   },
   codeScroll: {
     maxWidth: '100%',
+    backgroundColor: '#0B1220',
+  },
+  codeScrollContent: {
+    flexGrow: 0,
   },
   plainCode: {
     color: '#E5E7EB',
@@ -238,6 +206,7 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: 13,
     lineHeight: 20,
+    includeFontPadding: false,
     paddingHorizontal: 12,
     paddingVertical: 12,
     minWidth: 40,

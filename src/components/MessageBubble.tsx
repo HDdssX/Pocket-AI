@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { Image, Linking, Modal, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 
@@ -9,6 +9,7 @@ import { extractCodeBlocks, MarkdownRenderer } from './MarkdownRenderer';
 type Props = {
   message: ChatMessage;
   language: UiLanguage;
+  isStreaming?: boolean;
   onRegenerate?: (messageId: string) => void;
 };
 
@@ -65,13 +66,16 @@ function prepareAssistantMarkdown(message: ChatMessage, language: UiLanguage): s
   return applyContentPlugins(normalizedText, { message, language, isUser: false });
 }
 
-export function MessageBubble({ message, language, onRegenerate }: Props) {
+function MessageBubbleComponent({ message, language, isStreaming = false, onRegenerate }: Props) {
   const isUser = message.role === 'user';
-  const displayText = isUser ? message.text : prepareAssistantMarkdown(message, language);
+  const displayText = useMemo(
+    () => (isUser ? message.text : prepareAssistantMarkdown(message, language)),
+    [isUser, language, message]
+  );
   const copyableText = message.text || message.error || '';
   const [copied, setCopied] = useState(false);
   const [actionMenuVisible, setActionMenuVisible] = useState(false);
-  const codeBlocks = extractCodeBlocks(message.text);
+  const codeBlocks = useMemo(() => extractCodeBlocks(message.text), [message.text]);
   const hasCopyableText = copyableText.trim().length > 0;
   const hasCode = codeBlocks.some((block) => block.trim().length > 0);
   const canRegenerate = !isUser && !!onRegenerate;
@@ -136,7 +140,7 @@ export function MessageBubble({ message, language, onRegenerate }: Props) {
             {displayText}
           </Text>
         ) : (
-          <MarkdownRenderer text={displayText} />
+          <MarkdownRenderer text={displayText} deferCodeHighlight={isStreaming} />
         )}
         {message.attachments.length > 0 && (
           <View style={styles.attachments}>
@@ -193,6 +197,15 @@ export function MessageBubble({ message, language, onRegenerate }: Props) {
     </View>
   );
 }
+
+export const MessageBubble = memo(
+  MessageBubbleComponent,
+  (previous, next) =>
+    previous.message === next.message &&
+    previous.language === next.language &&
+    previous.isStreaming === next.isStreaming &&
+    previous.onRegenerate === next.onRegenerate
+);
 
 const styles = StyleSheet.create({
   row: {

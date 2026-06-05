@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -530,7 +530,7 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
   },
 };
 
-const STREAMING_FLUSH_INTERVAL_MS = 120;
+const STREAMING_FLUSH_INTERVAL_MS = 220;
 
 type SettingsSection = 'root' | 'api' | 'language' | 'records' | 'storage' | 'plugins' | 'about';
 
@@ -758,6 +758,7 @@ export default function App() {
   const streamingFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const streamingConversationIdRef = useRef<string | null>(null);
+  const regenerateAssistantMessageRef = useRef<(messageId: string) => void>(() => undefined);
   const handledSharedImageUrisRef = useRef(new Set<string>());
   const sessionDrawerTranslateX = useRef(new Animated.Value(0)).current;
   const sessionDrawerHiddenOffsetRef = useRef(360);
@@ -799,12 +800,17 @@ export default function App() {
   const [advancedApiSettingsOpen, setAdvancedApiSettingsOpen] = useState(false);
   const [reasoningEffortOptions, setReasoningEffortOptions] = useState<ReasoningEffort[]>(['none']);
   const [reasoningEffortsFetched, setReasoningEffortsFetched] = useState(false);
+  const handleRegenerateMessage = useCallback((messageId: string) => {
+    regenerateAssistantMessageRef.current(messageId);
+  }, []);
 
   const uiLanguage = persisted.uiLanguage;
   const copy = COPY[uiLanguage];
   const activeProfile = getActiveProfile(persisted);
   const activeConversation =
     persisted.conversations.find((item) => item.id === persisted.activeConversationId) ?? null;
+  const activeLastMessage = activeConversation?.messages[activeConversation.messages.length - 1] ?? null;
+  const activeLastMessageTextLength = activeLastMessage?.text.length ?? 0;
   const activeSessionTitle = activeConversation?.title || copy.noSession;
   const normalizedSessionSearch = normalizeSearchText(sessionSearchQuery);
   const sortedConversations = sortConversationsForList(persisted.conversations);
@@ -982,11 +988,16 @@ export default function App() {
     }
     requestAnimationFrame(() => {
       scrollRef.current?.scrollToEnd({ animated: false });
+      setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: false });
+      }, 80);
     });
     shouldScrollToBottomRef.current = false;
   }, [
     activeConversation?.id,
     activeConversation?.messages.length,
+    activeLastMessage?.id,
+    activeLastMessageTextLength,
     pendingAttachments.length,
     settingsVisible,
     sessionsVisible,
@@ -1460,6 +1471,7 @@ export default function App() {
     }
 
     const nextText = streamingTextRef.current;
+    shouldScrollToBottomRef.current = true;
     skipNextPersistRef.current = true;
     setPersisted((current) => ({
       ...current,
@@ -1782,6 +1794,10 @@ export default function App() {
       setSending(false);
     }
   }
+
+  regenerateAssistantMessageRef.current = (messageId: string) => {
+    void regenerateAssistantMessage(messageId);
+  };
 
   async function createNewSession() {
     await deleteAttachmentRecords(pendingAttachments).catch(() => undefined);
@@ -2200,9 +2216,8 @@ export default function App() {
                       key={message.id}
                       message={message}
                       language={uiLanguage}
-                      onRegenerate={(messageId) => {
-                        void regenerateAssistantMessage(messageId);
-                      }}
+                      isStreaming={sending && message.id === streamingMessageIdRef.current}
+                      onRegenerate={handleRegenerateMessage}
                     />
                   ))
                 ) : (

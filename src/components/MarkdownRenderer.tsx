@@ -1,4 +1,4 @@
-import { Component, type ReactNode } from 'react';
+import { Component, memo, useMemo, type ReactNode } from 'react';
 import { Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 
@@ -6,6 +6,7 @@ import { CodeBlock } from './CodeBlock';
 
 type Props = {
   text: string;
+  deferCodeHighlight?: boolean;
 };
 
 type ErrorBoundaryProps = {
@@ -88,18 +89,28 @@ function PlainTextFallback({ text }: { text: string }) {
   );
 }
 
-function MarkdownBody({ text }: Props) {
-  const normalized = normalizeMarkdownForStreaming(text);
+function MarkdownBody({ text, deferCodeHighlight = false }: Props) {
+  const normalized = useMemo(() => normalizeMarkdownForStreaming(text), [text]);
 
   return (
     <Markdown
       mergeStyle
       rules={{
         code_block: (node) => (
-          <CodeBlock key={node.key} code={getNodeContent(node)} language={getNodeLanguage(node)} />
+          <CodeBlock
+            key={node.key}
+            code={getNodeContent(node)}
+            language={getNodeLanguage(node)}
+            deferHighlight={deferCodeHighlight}
+          />
         ),
         fence: (node) => (
-          <CodeBlock key={node.key} code={getNodeContent(node)} language={getNodeLanguage(node)} />
+          <CodeBlock
+            key={node.key}
+            code={getNodeContent(node)}
+            language={getNodeLanguage(node)}
+            deferHighlight={deferCodeHighlight}
+          />
         ),
         table: (node, children) => (
           <ScrollView key={node.key} horizontal showsHorizontalScrollIndicator={false} style={markdownStyles.tableWrap}>
@@ -118,13 +129,15 @@ function MarkdownBody({ text }: Props) {
   );
 }
 
-export function MarkdownRenderer({ text }: Props) {
+function MarkdownRendererComponent({ text, deferCodeHighlight = false }: Props) {
   return (
     <MarkdownErrorBoundary fallback={<PlainTextFallback text={text} />}>
-      <MarkdownBody text={text} />
+      <MarkdownBody text={text} deferCodeHighlight={deferCodeHighlight} />
     </MarkdownErrorBoundary>
   );
 }
+
+export const MarkdownRenderer = memo(MarkdownRendererComponent);
 
 export const markdownStyles = StyleSheet.create({
   body: {
