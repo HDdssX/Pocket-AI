@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   Alert,
   Animated,
+  Appearance,
+  Easing,
+  FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   NativeEventEmitter,
@@ -20,9 +25,40 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import type { GestureResponderEvent } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
+import type {
+  AlertButton,
+  ColorSchemeName,
+  GestureResponderEvent,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  PanResponderGestureState,
+  StyleProp,
+  ViewStyle,
+} from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Camera,
+  Edit3,
+  FileText,
+  Image as ImageIcon,
+  Maximize2,
+  Menu,
+  MoreHorizontal,
+  Pin,
+  Plus,
+  Search,
+  Send,
+  Settings,
+  Square,
+  Trash2,
+  X,
+} from 'lucide-react-native';
 
 import { MessageBubble } from './src/components/MessageBubble';
 import {
@@ -74,10 +110,12 @@ import type {
   ApiProfile,
   AttachmentRecord,
   ChatMessage,
+  ChatMessageVariant,
   ConversationRecord,
   PendingAttachment,
   PersistedState,
   ReasoningEffort,
+  ThemeMode,
   UiLanguage,
 } from './src/types';
 import { getContentPlugins } from './src/plugins';
@@ -116,6 +154,18 @@ type LanguageCopy = {
   pluginsDescription: string;
   aboutSection: string;
   createdBy: string;
+  themeSection: string;
+  themeLight: string;
+  themeDark: string;
+  themeSystem: string;
+  versionLabel: string;
+  checkLatestVersion: string;
+  checkingLatestVersion: string;
+  latestVersionTitle: string;
+  latestVersionCurrent: string;
+  latestVersionAvailable: (version: string) => string;
+  latestVersionFailedTitle: string;
+  latestVersionFailedMessage: string;
   github: string;
   blog: string;
   email: string;
@@ -179,8 +229,10 @@ type LanguageCopy = {
   selectSessions: string;
   cancelSelection: string;
   copySelectedSessions: string;
-  latestSessionsFirst: string;
+  deleteSelectedSessions: string;
   selectedSessionsCount: (count: number) => string;
+  selectedSessionsDeleteMessage: (count: number) => string;
+  expandComposer: string;
   done: string;
   delete: string;
   deleteSessionTitle: string;
@@ -269,9 +321,21 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
       '聊天记录、会话列表和 API 配置会加密后保存在本机应用私有存储（AsyncStorage: ai-chat-pocket.state.v1）。加密密钥和 API key 保存在系统 SecureStore/Keystore；导入的附件会复制到应用私有文件目录。卸载应用或清空本地数据会删除这些内容。',
     pluginsSection: '插件',
     pluginsTitle: '内置内容插件',
-    pluginsDescription: '插件会在消息显示前做轻量处理，例如把常见 LaTeX/密码学公式转成更易读的符号。',
+    pluginsDescription: '插件会在消息显示前做轻量处理，例如用 KaTeX 保留 LaTeX/密码学公式的字体和版式。',
     aboutSection: '关于',
-    createdBy: '由 fanshanng 共创维护',
+    createdBy: '共创维护',
+    themeSection: '外观',
+    themeLight: '浅色',
+    themeDark: '深色',
+    themeSystem: '跟随系统',
+    versionLabel: '当前版本',
+    checkLatestVersion: '检查最新版本',
+    checkingLatestVersion: '检查中...',
+    latestVersionTitle: '版本检查',
+    latestVersionCurrent: '已是最新版本。',
+    latestVersionAvailable: (version) => `发现新版本：${version}`,
+    latestVersionFailedTitle: '检查失败',
+    latestVersionFailedMessage: '无法从 GitHub 获取最新版本信息。',
     github: 'GitHub',
     blog: '博客',
     email: '邮箱',
@@ -288,7 +352,7 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     activeModel: '当前模型',
     switchModel: '切换模型',
     modelPickerTitle: '选择模型',
-    fetchModels: '获取模型',
+    fetchModels: '重新获取模型',
     fetchingModels: '获取中...',
     modelsEmpty: '暂无可选模型，请先获取或手动输入。',
     modelsFetchFailed: '获取模型失败',
@@ -336,8 +400,10 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     selectSessions: '选择',
     cancelSelection: '取消选择',
     copySelectedSessions: '复制所选',
-    latestSessionsFirst: '最新对话在上方',
+    deleteSelectedSessions: '删除所选',
     selectedSessionsCount: (count) => `已选 ${count} 个`,
+    selectedSessionsDeleteMessage: (count) => `确定删除选中的 ${count} 个会话？`,
+    expandComposer: '大屏编辑',
     done: '完成',
     delete: '删除',
     deleteSessionTitle: '删除会话？',
@@ -415,9 +481,21 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
       'Chats, sessions, and API profiles are encrypted into this app private storage (AsyncStorage: ai-chat-pocket.state.v1). The encryption key and API keys are stored in system SecureStore/Keystore; imported attachments are copied into the app private file directory. Uninstalling the app or clearing local data removes them.',
     pluginsSection: 'Plugins',
     pluginsTitle: 'Built-in content plugins',
-    pluginsDescription: 'Plugins lightly transform messages before display, such as making common LaTeX and cryptography formulas easier to read.',
+    pluginsDescription: 'Plugins lightly transform messages before display, such as preserving LaTeX and cryptography formula typography with KaTeX.',
     aboutSection: 'About',
-    createdBy: 'Co-created and maintained by fanshanng',
+    createdBy: 'Co-maintainers',
+    themeSection: 'Appearance',
+    themeLight: 'Light',
+    themeDark: 'Dark',
+    themeSystem: 'System',
+    versionLabel: 'Current version',
+    checkLatestVersion: 'Check latest version',
+    checkingLatestVersion: 'Checking...',
+    latestVersionTitle: 'Version check',
+    latestVersionCurrent: 'You are on the latest version.',
+    latestVersionAvailable: (version) => `New version available: ${version}`,
+    latestVersionFailedTitle: 'Check failed',
+    latestVersionFailedMessage: 'Unable to fetch the latest version from GitHub.',
     github: 'GitHub',
     blog: 'Blog',
     email: 'Email',
@@ -434,7 +512,7 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     activeModel: 'Active model',
     switchModel: 'Switch model',
     modelPickerTitle: 'Choose model',
-    fetchModels: 'Fetch models',
+    fetchModels: 'Refetch models',
     fetchingModels: 'Fetching...',
     modelsEmpty: 'No models yet. Fetch models or type one manually.',
     modelsFetchFailed: 'Unable to fetch models',
@@ -482,8 +560,10 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
     selectSessions: 'Select',
     cancelSelection: 'Cancel selection',
     copySelectedSessions: 'Copy selected',
-    latestSessionsFirst: 'Latest chats first',
+    deleteSelectedSessions: 'Delete selected',
     selectedSessionsCount: (count) => `${count} selected`,
+    selectedSessionsDeleteMessage: (count) => `Delete ${count} selected sessions?`,
+    expandComposer: 'Expand editor',
     done: 'Done',
     delete: 'Delete',
     deleteSessionTitle: 'Delete session?',
@@ -531,8 +611,218 @@ const COPY: Record<UiLanguage, LanguageCopy> = {
 };
 
 const STREAMING_FLUSH_INTERVAL_MS = 220;
+const STREAMING_SCROLL_INTERVAL_MS = 260;
+const CHAT_BOTTOM_FOLLOW_THRESHOLD = 96;
+const APP_VERSION = '1.1.0';
+const LATEST_RELEASE_URL = 'https://api.github.com/repos/HDdssX/Pocket-AI/releases/latest';
+const DRAWER_SWIPE_SLOPE = 0.35;
+const DRAWER_SWIPE_MIN_DISTANCE = 5;
+const SESSION_CLOSE_SWIPE_SLOPE = 0.08;
+const SESSION_CLOSE_SWIPE_MIN_DISTANCE = 1;
+const COMPOSER_VISIBLE_BOTTOM_GAP = 8;
 
-type SettingsSection = 'root' | 'api' | 'language' | 'records' | 'storage' | 'plugins' | 'about';
+type SettingsSection = 'root' | 'api' | 'language' | 'theme' | 'records' | 'storage' | 'plugins' | 'about';
+
+type SlideFadePresenceProps = {
+  children: ReactNode;
+  distance?: number;
+  from?: 'top' | 'bottom';
+  style?: StyleProp<ViewStyle>;
+  visible: boolean;
+};
+
+function isLooseDirectionalSwipe(
+  gestureState: PanResponderGestureState,
+  direction: 'left' | 'right',
+  minDistance = DRAWER_SWIPE_MIN_DISTANCE
+): boolean {
+  const signedDx = direction === 'right' ? gestureState.dx : -gestureState.dx;
+  if (signedDx < minDistance) {
+    return false;
+  }
+
+  const absX = Math.abs(gestureState.dx);
+  const absY = Math.abs(gestureState.dy);
+  return absX > absY * DRAWER_SWIPE_SLOPE || Math.abs(gestureState.vx) > 0.14;
+}
+
+function isLooseDirectionalDelta(
+  dx: number,
+  dy: number,
+  direction: 'left' | 'right',
+  minDistance = DRAWER_SWIPE_MIN_DISTANCE
+): boolean {
+  const signedDx = direction === 'right' ? dx : -dx;
+  if (signedDx < minDistance) {
+    return false;
+  }
+
+  return Math.abs(dx) > Math.abs(dy) * DRAWER_SWIPE_SLOPE;
+}
+
+function isSensitiveSessionCloseSwipe(gestureState: PanResponderGestureState): boolean {
+  const signedDx = -gestureState.dx;
+  if (signedDx < SESSION_CLOSE_SWIPE_MIN_DISTANCE) {
+    return false;
+  }
+
+  const absX = Math.abs(gestureState.dx);
+  const absY = Math.abs(gestureState.dy);
+  return absX > absY * SESSION_CLOSE_SWIPE_SLOPE || signedDx > 4 || Math.abs(gestureState.vx) > 0.03;
+}
+
+function isSensitiveSessionCloseDelta(dx: number, dy: number): boolean {
+  const signedDx = -dx;
+  if (signedDx < SESSION_CLOSE_SWIPE_MIN_DISTANCE) {
+    return false;
+  }
+
+  return Math.abs(dx) > Math.abs(dy) * SESSION_CLOSE_SWIPE_SLOPE || signedDx > 4;
+}
+
+function SlideFadePresence({
+  children,
+  distance = 14,
+  from = 'bottom',
+  style,
+  visible,
+}: SlideFadePresenceProps) {
+  const [mounted, setMounted] = useState(visible);
+  const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
+
+  useEffect(() => {
+    let active = true;
+    if (visible) {
+      setMounted(true);
+    }
+
+    const start = () => {
+      progress.stopAnimation();
+      Animated.timing(progress, {
+        toValue: visible ? 1 : 0,
+        duration: visible ? 180 : 130,
+        easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (active && finished && !visible) {
+          setMounted(false);
+        }
+      });
+    };
+
+    if (visible) {
+      requestAnimationFrame(start);
+    } else {
+      start();
+    }
+
+    return () => {
+      active = false;
+      progress.stopAnimation();
+    };
+  }, [progress, visible]);
+
+  if (!mounted) {
+    return null;
+  }
+
+  const translateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [from === 'top' ? -distance : distance, 0],
+  });
+
+  return (
+    <Animated.View
+      pointerEvents={visible ? 'auto' : 'none'}
+      style={[style, { opacity: progress, transform: [{ translateY }] }]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+type AppTheme = {
+  scheme: 'light' | 'dark';
+  gradient: readonly [string, string, string];
+  statusBar: 'dark-content' | 'light-content';
+  text: string;
+  muted: string;
+  subtle: string;
+  surface: string;
+  surfaceAlt: string;
+  border: string;
+  strong: string;
+  primary: string;
+  primarySoft: string;
+  dangerSoft: string;
+  divider: string;
+  input: string;
+  placeholder: string;
+  userBubble: string;
+  userBorder: string;
+};
+
+const LIGHT_THEME: AppTheme = {
+  scheme: 'light',
+  gradient: ['#FFFFFF', '#F6F8FB', '#EEF3F8'],
+  statusBar: 'dark-content',
+  text: '#111827',
+  muted: '#64748B',
+  subtle: '#334155',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F8FAFC',
+  border: '#D8E0EA',
+  strong: '#111827',
+  primary: '#2563EB',
+  primarySoft: '#EFF6FF',
+  dangerSoft: '#FEF2F2',
+  divider: '#E6ECF2',
+  input: '#FFFFFF',
+  placeholder: '#78869D',
+  userBubble: '#DBEAFE',
+  userBorder: '#93C5FD',
+};
+
+const DARK_THEME: AppTheme = {
+  scheme: 'dark',
+  gradient: ['#0B1020', '#111827', '#172033'],
+  statusBar: 'light-content',
+  text: '#E5E7EB',
+  muted: '#94A3B8',
+  subtle: '#CBD5E1',
+  surface: '#111827',
+  surfaceAlt: '#1F2937',
+  border: '#334155',
+  strong: '#F8FAFC',
+  primary: '#60A5FA',
+  primarySoft: '#172554',
+  dangerSoft: '#3F1D24',
+  divider: '#334155',
+  input: '#111827',
+  placeholder: '#94A3B8',
+  userBubble: '#1E3A8A',
+  userBorder: '#2563EB',
+};
+
+function resolveTheme(mode: ThemeMode, systemScheme: 'light' | 'dark' | null | undefined): AppTheme {
+  const scheme = mode === 'system' ? systemScheme ?? 'light' : mode;
+  return scheme === 'dark' ? DARK_THEME : LIGHT_THEME;
+}
+
+function compareVersions(first: string, second: string): number {
+  const a = first.replace(/^v/i, '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const b = second.replace(/^v/i, '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index++) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function normalizeSystemColorScheme(value: ColorSchemeName | null | undefined): 'light' | 'dark' | null {
+  return value === 'dark' || value === 'light' ? value : null;
+}
 
 function createConversation(profile: ApiProfile, defaultTitle: string): ConversationRecord {
   const now = new Date().toISOString();
@@ -584,7 +874,40 @@ function getAllConversationAttachments(conversations: ConversationRecord[]): Att
   return conversations.flatMap(getConversationAttachments);
 }
 
+function normalizeMessageVariants(message: ChatMessage, assistantMessage?: ChatMessage): ChatMessageVariant[] {
+  const existing = message.variants && message.variants.length > 0
+    ? message.variants
+    : [
+        {
+          id: makeId('variant'),
+          text: message.text,
+          createdAt: message.createdAt,
+          attachments: message.attachments,
+          assistantMessageId: assistantMessage?.id,
+          assistantText: assistantMessage?.text,
+          assistantResponseId: assistantMessage?.responseId,
+          assistantError: assistantMessage?.error,
+        },
+      ];
+
+  const activeIndex = Math.min(Math.max(message.activeVariantIndex ?? 0, 0), existing.length - 1);
+  const normalized = [...existing];
+  normalized[activeIndex] = {
+    ...normalized[activeIndex],
+    text: message.text,
+    createdAt: message.createdAt,
+    attachments: message.attachments,
+    assistantMessageId: assistantMessage?.id ?? normalized[activeIndex].assistantMessageId,
+    assistantText: assistantMessage?.text ?? normalized[activeIndex].assistantText,
+    assistantResponseId: assistantMessage?.responseId ?? normalized[activeIndex].assistantResponseId,
+    assistantError: assistantMessage?.error ?? normalized[activeIndex].assistantError,
+  };
+  return normalized;
+}
+
 function sanitizeProfile(profile: ApiProfile): ApiProfile {
+  const model = profile.model.trim() || DEFAULT_PROFILE.model;
+  const reasoningEffort = profile.reasoningEffort ?? DEFAULT_PROFILE.reasoningEffort;
   return {
     ...DEFAULT_PROFILE,
     ...profile,
@@ -592,10 +915,13 @@ function sanitizeProfile(profile: ApiProfile): ApiProfile {
     label: profile.label.trim() || DEFAULT_PROFILE.label,
     apiProtocol: profile.apiProtocol ?? DEFAULT_PROFILE.apiProtocol,
     baseUrl: profile.baseUrl.trim() || DEFAULT_PROFILE.baseUrl,
-    model: profile.model.trim() || DEFAULT_PROFILE.model,
+    model,
     projectId: profile.projectId.trim(),
     organization: profile.organization.trim(),
     systemPrompt: profile.systemPrompt.trim(),
+    reasoningEffort,
+    cachedModels: uniqueStrings([model, ...(profile.cachedModels ?? [])]),
+    cachedReasoningEfforts: uniqueStrings([reasoningEffort, ...(profile.cachedReasoningEfforts ?? [])]) as ReasoningEffort[],
   };
 }
 
@@ -619,6 +945,8 @@ function applyApiPreset(profile: ApiProfile, preset: (typeof API_PRESETS)[number
     model: preset.model,
     storeResponses: preset.storeResponses,
     reasoningEffort: preset.reasoningEffort,
+    cachedModels: [preset.model],
+    cachedReasoningEfforts: [preset.reasoningEffort],
     projectId: preset.id === 'deepseek' ? '' : profile.projectId,
     organization: preset.id === 'deepseek' ? '' : profile.organization,
   };
@@ -642,6 +970,14 @@ function inferReasoningEffortOptions(profile: ApiProfile): ReasoningEffort[] {
   }
 
   return ['none'];
+}
+
+function getCachedModelsForProfile(profile: ApiProfile): string[] {
+  return uniqueStrings([profile.model, ...(profile.cachedModels ?? [])]);
+}
+
+function getCachedReasoningEffortsForProfile(profile: ApiProfile): ReasoningEffort[] {
+  return uniqueStrings([profile.reasoningEffort, ...(profile.cachedReasoningEfforts ?? [])]) as ReasoningEffort[];
 }
 
 function profileHasAdvancedValues(profile: ApiProfile): boolean {
@@ -709,14 +1045,6 @@ function formatRelativeTime(value: string, language: UiLanguage): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-function formatConversationListMeta(conversation: ConversationRecord, language: UiLanguage): string {
-  const messageText =
-    language === 'zh'
-      ? `${conversation.messages.length}条消息`
-      : `${conversation.messages.length} messages`;
-  return `${conversation.model} | ${messageText} | ${formatRelativeTime(conversation.updatedAt, language)}`;
-}
-
 function formatConversationMarkdown(conversation: ConversationRecord): string {
   const lines = [
     `# ${conversation.title}`,
@@ -748,31 +1076,114 @@ function formatConversationMarkdown(conversation: ConversationRecord): string {
   return lines.join('\n');
 }
 
+function MenuIcon({ color = '#1F2937' }: { color?: string }) {
+  return <Menu size={20} color={color} strokeWidth={2.3} />;
+}
+
+function PlusIcon({ light = false, color }: { light?: boolean; color?: string }) {
+  return <Plus size={20} color={color ?? (light ? '#FFFFFF' : '#1F2937')} strokeWidth={2.4} />;
+}
+
+function MoreIcon({ color = '#1F2937' }: { color?: string }) {
+  return <MoreHorizontal size={21} color={color} strokeWidth={2.4} />;
+}
+
+function SearchIcon({ color = '#111827' }: { color?: string }) {
+  return <Search size={20} color={color} strokeWidth={2.3} />;
+}
+
+function SettingsIcon({ color = '#111827' }: { color?: string }) {
+  return <Settings size={20} color={color} strokeWidth={2.3} />;
+}
+
+function DirectionIcon({ direction, light = false, color: iconColor }: { direction: 'up' | 'down' | 'left' | 'right'; light?: boolean; color?: string }) {
+  const color = iconColor ?? (light ? '#FFFFFF' : '#334155');
+  if (direction === 'left') return <ChevronLeft size={18} color={color} strokeWidth={2.5} />;
+  if (direction === 'right') return <ChevronRight size={18} color={color} strokeWidth={2.5} />;
+  return <ChevronUp size={18} color={color} strokeWidth={2.5} style={direction === 'down' ? styles.iconRotateDown : undefined} />;
+}
+
+function SendIcon({ light = true }: { light?: boolean }) {
+  return <Send size={16} color={light ? '#FFFFFF' : '#2563EB'} strokeWidth={2.4} />;
+}
+
+function StopIcon() {
+  return <Square size={13} color="#FFFFFF" fill="#FFFFFF" strokeWidth={2.2} />;
+}
+
+function CheckIcon() {
+  return <Check size={15} color="#FFFFFF" strokeWidth={3} />;
+}
+
+function PinIcon({ light = false }: { light?: boolean }) {
+  return <Pin size={16} color={light ? '#E5E7EB' : '#2563EB'} strokeWidth={2.4} />;
+}
+
+function EditIcon() {
+  return <Edit3 size={17} color="#E5E7EB" strokeWidth={2.3} />;
+}
+
+function TrashIcon() {
+  return <Trash2 size={17} color="#FCA5A5" strokeWidth={2.3} />;
+}
+
+function GitHubIcon({ color = '#24292F' }: { color?: string }) {
+  return (
+    <Svg width={15} height={15} viewBox="0 0 98 96" fill="none">
+      <Path
+        fill={color}
+        d="M48.9 0C21.9 0 0 22 0 49.1c0 21.7 14 40 33.4 46.5 2.4.5 3.3-1.1 3.3-2.4v-8.4c-13.6 3-16.5-6.6-16.5-6.6-2.2-5.7-5.4-7.2-5.4-7.2-4.4-3 .3-2.9.3-2.9 4.9.3 7.5 5.1 7.5 5.1 4.3 7.5 11.4 5.3 14.2 4.1.4-3.2 1.7-5.3 3.1-6.6-10.9-1.2-22.3-5.5-22.3-24.3 0-5.4 1.9-9.8 5-13.2-.5-1.2-2.2-6.2.5-13 0 0 4.1-1.3 13.4 5 3.9-1.1 8.1-1.6 12.3-1.6s8.4.6 12.3 1.6c9.3-6.3 13.4-5 13.4-5 2.7 6.8 1 11.8.5 13 3.1 3.4 5 7.8 5 13.2 0 18.9-11.5 23.1-22.4 24.3 1.8 1.5 3.3 4.5 3.3 9.1v13.4c0 1.3.9 2.9 3.4 2.4C84 89.1 98 70.7 98 49.1 97.9 22 75.9 0 48.9 0Z"
+      />
+    </Svg>
+  );
+}
+
 export default function App() {
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
+  const composerDockRef = useRef<View>(null);
+  const composerLiftFrameRef = useRef<number | null>(null);
+  const composerKeyboardResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const composerLiftTranslateY = useRef(new Animated.Value(0)).current;
+  const composerLiftAnimationIdRef = useRef(0);
+  const composerLiftMeasureIdRef = useRef(0);
+  const composerAutoLiftTargetRef = useRef(0);
+  const composerAutoLiftCurrentRef = useRef(0);
+  const keyboardVisibleRef = useRef(false);
   const shouldScrollToBottomRef = useRef(true);
+  const autoFollowScrollRef = useRef(true);
   const skipNextPersistRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamingTextRef = useRef('');
   const streamingFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamingScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const streamingConversationIdRef = useRef<string | null>(null);
   const regenerateAssistantMessageRef = useRef<(messageId: string) => void>(() => undefined);
   const handledSharedImageUrisRef = useRef(new Set<string>());
-  const sessionDrawerTranslateX = useRef(new Animated.Value(0)).current;
+  const sessionDrawerTranslateX = useRef(new Animated.Value(-Math.max(1, Math.min(windowWidth, 520)))).current;
   const sessionDrawerHiddenOffsetRef = useRef(360);
   const sessionDrawerAnimationIdRef = useRef(0);
+  const sessionDrawerClosingRef = useRef(false);
   const sessionDrawerCloseFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const drawerGestureOpeningRef = useRef(false);
-  const drawerGestureFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsPanelTranslateX = useRef(new Animated.Value(0)).current;
+  const settingsContentProgress = useRef(new Animated.Value(1)).current;
+  const settingsContentAnimationIdRef = useRef(0);
   const settingsPanelHiddenOffsetRef = useRef(360);
   const settingsPanelAnimationIdRef = useRef(0);
   const settingsPanelCloseFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsReturnTargetRef = useRef<'chat' | 'drawer'>('chat');
   const settingsTouchStartRef = useRef<{ x: number; y: number } | null>(null);
   const settingsTouchHasClosedRef = useRef(false);
+  const sessionTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const sessionTouchActiveRef = useRef(false);
+  const sessionTouchLastDxRef = useRef(0);
+  const bottomSheetTranslateY = useRef(new Animated.Value(420)).current;
+  const bottomSheetBackdropOpacity = useRef(new Animated.Value(0)).current;
+  const bottomSheetAnimationIdRef = useRef(0);
+  const bottomSheetCloseFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bottomSheetContentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [ready, setReady] = useState(false);
   const [persisted, setPersisted] = useState<PersistedState>(EMPTY_STATE);
   const [apiKey, setApiKey] = useState('');
@@ -788,15 +1199,25 @@ export default function App() {
   const [sessionsVisible, setSessionsVisible] = useState(false);
   const [apiProfilesVisible, setApiProfilesVisible] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
+  const [bottomSheetMode, setBottomSheetMode] = useState<'models' | 'profiles' | null>(null);
+  const [bottomSheetContentReady, setBottomSheetContentReady] = useState(true);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [checkingVersion, setCheckingVersion] = useState(false);
+  const [systemColorScheme, setSystemColorScheme] = useState<'light' | 'dark' | null>(() =>
+    normalizeSystemColorScheme(Appearance.getColorScheme())
+  );
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('root');
+  const [settingsContentMotion, setSettingsContentMotion] = useState<'forward' | 'back' | 'rootEnter'>('forward');
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
+  const [sessionSearchVisible, setSessionSearchVisible] = useState(false);
+  const [sessionSearchRaised, setSessionSearchRaised] = useState(false);
   const [sessionSelectionMode, setSessionSelectionMode] = useState(false);
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [sessionContextMenuId, setSessionContextMenuId] = useState<string | null>(null);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [draftSessionTitle, setDraftSessionTitle] = useState('');
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const [advancedApiSettingsOpen, setAdvancedApiSettingsOpen] = useState(false);
   const [reasoningEffortOptions, setReasoningEffortOptions] = useState<ReasoningEffort[]>(['none']);
   const [reasoningEffortsFetched, setReasoningEffortsFetched] = useState(false);
@@ -806,12 +1227,13 @@ export default function App() {
 
   const uiLanguage = persisted.uiLanguage;
   const copy = COPY[uiLanguage];
+  const theme = resolveTheme(persisted.themeMode, systemColorScheme);
+  const isDark = theme.scheme === 'dark';
   const activeProfile = getActiveProfile(persisted);
   const activeConversation =
     persisted.conversations.find((item) => item.id === persisted.activeConversationId) ?? null;
   const activeLastMessage = activeConversation?.messages[activeConversation.messages.length - 1] ?? null;
   const activeLastMessageTextLength = activeLastMessage?.text.length ?? 0;
-  const activeSessionTitle = activeConversation?.title || copy.noSession;
   const normalizedSessionSearch = normalizeSearchText(sessionSearchQuery);
   const sortedConversations = sortConversationsForList(persisted.conversations);
   const visibleConversations = sortedConversations.filter((conversation) =>
@@ -821,54 +1243,65 @@ export default function App() {
     persisted.conversations.find((conversation) => conversation.id === renamingConversationId) ?? null;
   const sessionContextConversation =
     persisted.conversations.find((conversation) => conversation.id === sessionContextMenuId) ?? null;
-  sessionDrawerHiddenOffsetRef.current = Math.max(windowWidth, 320);
+  const sessionDrawerWidth = Math.max(1, Math.min(windowWidth, 520));
+  sessionDrawerHiddenOffsetRef.current = sessionDrawerWidth;
   settingsPanelHiddenOffsetRef.current = Math.max(windowWidth, 320);
   const sessionDrawerPanResponder = useMemo(
     () =>
       PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_, gestureState) =>
+          isSensitiveSessionCloseSwipe(gestureState),
         onMoveShouldSetPanResponder: (_, gestureState) =>
-          Math.abs(gestureState.dx) > 14 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.18,
+          isSensitiveSessionCloseSwipe(gestureState),
         onPanResponderGrant: () => {
           sessionDrawerTranslateX.stopAnimation();
         },
         onPanResponderMove: (_, gestureState) => {
-          if (gestureState.dx < 0) {
-            sessionDrawerTranslateX.setValue(Math.max(-sessionDrawerHiddenOffsetRef.current, gestureState.dx));
-          }
+          sessionDrawerTranslateX.setValue(
+            Math.max(-sessionDrawerHiddenOffsetRef.current, Math.min(0, gestureState.dx))
+          );
         },
         onPanResponderRelease: (_, gestureState) => {
-          if (gestureState.dx < -windowWidth * 0.22 || gestureState.vx < -0.75) {
+          if (gestureState.dx < -SESSION_CLOSE_SWIPE_MIN_DISTANCE || gestureState.vx < -0.03) {
             closeSessionsDrawer();
             return;
           }
-          openSessionsDrawer();
+          Animated.timing(sessionDrawerTranslateX, {
+            toValue: 0,
+            duration: 170,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }).start();
         },
         onPanResponderTerminate: () => {
-          closeSessionsDrawer();
+          Animated.timing(sessionDrawerTranslateX, {
+            toValue: 0,
+            duration: 170,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }).start();
         },
+        onPanResponderTerminationRequest: () => false,
       }),
     [sessionDrawerTranslateX, windowWidth]
   );
   const chatOpenDrawerPanResponder = useMemo(
     () =>
       PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+          if (sessionsVisible || settingsVisible || apiProfilesVisible || modelPickerVisible || chatMenuVisible) {
+            return false;
+          }
+          return isLooseDirectionalSwipe(gestureState, 'right', 7);
+        },
         onMoveShouldSetPanResponder: (_, gestureState) => {
           if (sessionsVisible || settingsVisible || apiProfilesVisible || modelPickerVisible || chatMenuVisible) {
             return false;
           }
-          return gestureState.dx > 16 && gestureState.dx > Math.abs(gestureState.dy) * 1.35;
+          return isLooseDirectionalSwipe(gestureState, 'right', 7);
         },
         onPanResponderGrant: () => {
           drawerGestureOpeningRef.current = true;
-          if (drawerGestureFallbackRef.current) {
-            clearTimeout(drawerGestureFallbackRef.current);
-          }
-          drawerGestureFallbackRef.current = setTimeout(() => {
-            if (drawerGestureOpeningRef.current) {
-              drawerGestureOpeningRef.current = false;
-              closeSessionsDrawer();
-            }
-          }, 900);
           sessionDrawerTranslateX.stopAnimation();
           setSessionsVisible(true);
           sessionDrawerTranslateX.setValue(-sessionDrawerHiddenOffsetRef.current);
@@ -879,11 +1312,7 @@ export default function App() {
         },
         onPanResponderRelease: (_, gestureState) => {
           drawerGestureOpeningRef.current = false;
-          if (drawerGestureFallbackRef.current) {
-            clearTimeout(drawerGestureFallbackRef.current);
-            drawerGestureFallbackRef.current = null;
-          }
-          if (gestureState.dx > windowWidth * 0.22 || gestureState.vx > 0.75) {
+          if (gestureState.dx > windowWidth * 0.14 || gestureState.vx > 0.38) {
             openSessionsDrawer();
             return;
           }
@@ -891,12 +1320,9 @@ export default function App() {
         },
         onPanResponderTerminate: () => {
           drawerGestureOpeningRef.current = false;
-          if (drawerGestureFallbackRef.current) {
-            clearTimeout(drawerGestureFallbackRef.current);
-            drawerGestureFallbackRef.current = null;
-          }
           closeSessionsDrawer();
         },
+        onPanResponderTerminationRequest: () => false,
       }),
     [
       apiProfilesVisible,
@@ -907,6 +1333,71 @@ export default function App() {
       settingsVisible,
       windowWidth,
     ]
+  );
+  const chatSceneTranslateX = sessionDrawerTranslateX.interpolate({
+    inputRange: [-sessionDrawerWidth, 0],
+    outputRange: [0, sessionDrawerWidth],
+    extrapolate: 'clamp',
+  });
+  const settingsContentTranslateX = settingsContentProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [settingsContentMotion === 'rootEnter' ? -28 : 34, 0],
+    extrapolate: 'clamp',
+  });
+  const androidStatusInset = Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0;
+  const compactWindow = windowHeight < 560;
+  const topBarExtraInset = Platform.OS === 'android' ? Math.max(androidStatusInset + 8, compactWindow ? 18 : 32) : 12;
+  const modalTopInset = Platform.OS === 'android' ? Math.max(androidStatusInset + 12, compactWindow ? 24 : 36) : 12;
+  const drawerTopInset = Platform.OS === 'android' ? Math.max(androidStatusInset + 24, compactWindow ? 38 : 52) : 22;
+  const composerLineCount = composerText.split('\n').length;
+  const composerNeedsExpand = composerText.length >= 220 || composerLineCount >= 7;
+  const composerSingleLine = composerLineCount <= 1 && composerText.length < 40;
+  const composerBottomInset = Platform.OS === 'android' ? (compactWindow ? 4 : 8) : 10;
+  const sessionSearchNeedsRaise = sessionSearchQuery.length > 28 || sessionSearchQuery.includes('\n');
+  const sessionSearchIsRaised = sessionSearchRaised && sessionSearchNeedsRaise;
+  const drawerBlankSwipeFooterHeight = visibleConversations.length < 6 ? Math.max(180, windowHeight * 0.28) : 56;
+  const renderDrawerSession = useCallback(
+    ({ item: conversation }: { item: ConversationRecord }) => {
+      const active = conversation.id === activeConversation?.id;
+      const selected = selectedSessionIds.includes(conversation.id);
+      return (
+        <Pressable
+          style={[
+            styles.drawerSessionItem,
+            active && styles.drawerSessionItemActive,
+            selected && [styles.drawerSessionItemSelected, { backgroundColor: theme.primarySoft }],
+            { borderBottomColor: active ? theme.primary : theme.divider },
+          ]}
+          onPress={() => openConversation(conversation.id)}
+          onLongPress={() => {
+            if (!sessionSelectionMode) {
+              setSessionContextMenuId(conversation.id);
+            }
+          }}
+          delayLongPress={320}
+        >
+          <View style={styles.drawerSessionMain}>
+            {sessionSelectionMode && (
+              <View style={[styles.sessionSelectMark, { backgroundColor: theme.surface, borderColor: theme.border }, selected && styles.sessionSelectMarkActive]}>
+                {selected && <CheckIcon />}
+              </View>
+            )}
+            <View style={styles.sessionMeta}>
+              <View style={styles.drawerSessionTitleRow}>
+                {conversation.pinned && <PinIcon />}
+                <Text style={[styles.drawerSessionTitle, { color: theme.text }]} numberOfLines={1}>
+                  {conversation.title}
+                </Text>
+                <Text style={[styles.drawerSessionTime, { color: theme.muted }]} numberOfLines={1}>
+                  {formatRelativeTime(conversation.updatedAt, uiLanguage)}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </Pressable>
+      );
+    },
+    [activeConversation?.id, selectedSessionIds, sessionSelectionMode, theme.border, theme.divider, theme.muted, theme.primary, theme.primarySoft, theme.surface, theme.text, uiLanguage]
   );
 
   useEffect(() => {
@@ -970,6 +1461,13 @@ export default function App() {
   }, [sessionDrawerTranslateX, sessionsVisible, windowWidth]);
 
   useEffect(() => {
+    if (sessionsVisible || drawerGestureOpeningRef.current) {
+      return;
+    }
+    sessionDrawerTranslateX.setValue(-sessionDrawerHiddenOffsetRef.current);
+  }, [sessionDrawerTranslateX, sessionsVisible, windowWidth]);
+
+  useEffect(() => {
     if (!settingsVisible) {
       return;
     }
@@ -978,19 +1476,76 @@ export default function App() {
     Animated.timing(settingsPanelTranslateX, {
       toValue: 0,
       duration: 190,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
   }, [settingsPanelTranslateX, settingsVisible, windowWidth]);
+
+  useEffect(() => {
+    if (!sessionSearchNeedsRaise && sessionSearchRaised) {
+      setSessionSearchRaised(false);
+    }
+  }, [sessionSearchNeedsRaise, sessionSearchRaised]);
+
+  useEffect(() => {
+    const listenerId = composerLiftTranslateY.addListener(({ value }) => {
+      composerAutoLiftCurrentRef.current = Math.max(0, -value);
+    });
+    return () => {
+      composerLiftTranslateY.removeListener(listenerId);
+      composerLiftTranslateY.stopAnimation();
+    };
+  }, [composerLiftTranslateY]);
+
+  useEffect(() => {
+    updateComposerAutoLift();
+  }, [
+    attachmentMenuVisible,
+    composerLineCount,
+    composerText.length,
+    pendingAttachments.length,
+    windowHeight,
+    windowWidth,
+  ]);
+
+  useEffect(() => {
+    const keyboardShowEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const keyboardHideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(keyboardShowEvent, () => {
+      keyboardVisibleRef.current = true;
+      if (composerKeyboardResetTimerRef.current) {
+        clearTimeout(composerKeyboardResetTimerRef.current);
+        composerKeyboardResetTimerRef.current = null;
+      }
+      updateComposerAutoLift();
+    });
+    const hideSubscription = Keyboard.addListener(keyboardHideEvent, () => {
+      resetComposerAutoLift();
+      composerKeyboardResetTimerRef.current = setTimeout(() => {
+        composerKeyboardResetTimerRef.current = null;
+        resetComposerAutoLift();
+      }, 180);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [
+    attachmentMenuVisible,
+    composerLineCount,
+    composerText.length,
+    pendingAttachments.length,
+    windowHeight,
+    windowWidth,
+  ]);
 
   useEffect(() => {
     if (!shouldScrollToBottomRef.current) {
       return;
     }
     requestAnimationFrame(() => {
-      scrollRef.current?.scrollToEnd({ animated: false });
-      setTimeout(() => {
-        scrollRef.current?.scrollToEnd({ animated: false });
-      }, 80);
+      scrollRef.current?.scrollToEnd({ animated: !sending });
     });
     shouldScrollToBottomRef.current = false;
   }, [
@@ -1009,27 +1564,41 @@ export default function App() {
       if (streamingFlushTimerRef.current) {
         clearTimeout(streamingFlushTimerRef.current);
       }
+      if (streamingScrollTimerRef.current) {
+        clearTimeout(streamingScrollTimerRef.current);
+      }
       if (sessionDrawerCloseFallbackRef.current) {
         clearTimeout(sessionDrawerCloseFallbackRef.current);
       }
       if (settingsPanelCloseFallbackRef.current) {
         clearTimeout(settingsPanelCloseFallbackRef.current);
       }
-      if (drawerGestureFallbackRef.current) {
-        clearTimeout(drawerGestureFallbackRef.current);
+      if (bottomSheetCloseFallbackRef.current) {
+        clearTimeout(bottomSheetCloseFallbackRef.current);
+      }
+      if (bottomSheetContentTimerRef.current) {
+        clearTimeout(bottomSheetContentTimerRef.current);
+      }
+      if (composerLiftFrameRef.current !== null) {
+        cancelAnimationFrame(composerLiftFrameRef.current);
+        composerLiftFrameRef.current = null;
+      }
+      if (composerKeyboardResetTimerRef.current) {
+        clearTimeout(composerKeyboardResetTimerRef.current);
+        composerKeyboardResetTimerRef.current = null;
       }
     },
     []
   );
 
   useEffect(() => {
-    if (reasoningEffortsFetched) {
-      setReasoningEffortOptions(inferReasoningEffortOptions(draftProfile));
-      return;
-    }
-
-    setReasoningEffortOptions(uniqueStrings(['none', draftProfile.reasoningEffort]) as ReasoningEffort[]);
-  }, [draftProfile.apiProtocol, draftProfile.model, draftProfile.reasoningEffort, reasoningEffortsFetched]);
+  const subscription = Appearance.addChangeListener(({ colorScheme }) => {
+      setSystemColorScheme(normalizeSystemColorScheme(colorScheme));
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (!ready || Platform.OS !== 'android') return;
@@ -1088,11 +1657,107 @@ export default function App() {
 
   function updateConversations(nextConversations: ConversationRecord[], nextActiveId: string | null) {
     shouldScrollToBottomRef.current = true;
+    autoFollowScrollRef.current = true;
     setPersisted((current) => ({
       ...current,
       conversations: nextConversations,
       activeConversationId: nextActiveId,
     }));
+  }
+
+  function isChatScrollNearBottom(metrics: NativeScrollEvent): boolean {
+    const visibleBottom = metrics.contentOffset.y + metrics.layoutMeasurement.height;
+    return visibleBottom >= metrics.contentSize.height - CHAT_BOTTOM_FOLLOW_THRESHOLD;
+  }
+
+  function handleChatScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    autoFollowScrollRef.current = isChatScrollNearBottom(event.nativeEvent);
+  }
+
+  function animateComposerAutoLiftTo(nextLift: number, force = false) {
+    const normalizedLift = Math.max(0, Math.round(nextLift));
+    const animationId = composerLiftAnimationIdRef.current + 1;
+    if (
+      !force &&
+      Math.abs(normalizedLift - composerAutoLiftTargetRef.current) <= 1 &&
+      Math.abs(normalizedLift - composerAutoLiftCurrentRef.current) <= 1
+    ) {
+      return;
+    }
+
+    composerLiftAnimationIdRef.current = animationId;
+    composerAutoLiftTargetRef.current = normalizedLift;
+    composerLiftTranslateY.stopAnimation((value) => {
+      if (animationId !== composerLiftAnimationIdRef.current) {
+        return;
+      }
+      composerAutoLiftCurrentRef.current = Math.max(0, -value);
+      if (!force && Math.abs(normalizedLift - composerAutoLiftCurrentRef.current) <= 1) {
+        composerLiftTranslateY.setValue(-normalizedLift);
+        composerAutoLiftCurrentRef.current = normalizedLift;
+        return;
+      }
+      Animated.timing(composerLiftTranslateY, {
+        toValue: -normalizedLift,
+        duration: normalizedLift === 0 ? 190 : 160,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (
+          finished &&
+          animationId === composerLiftAnimationIdRef.current &&
+          Math.abs(normalizedLift - composerAutoLiftTargetRef.current) <= 1
+        ) {
+          composerLiftTranslateY.setValue(-normalizedLift);
+          composerAutoLiftCurrentRef.current = normalizedLift;
+        }
+      });
+    });
+  }
+
+  function resetComposerAutoLift() {
+    keyboardVisibleRef.current = false;
+    composerLiftMeasureIdRef.current += 1;
+    if (composerLiftFrameRef.current !== null) {
+      cancelAnimationFrame(composerLiftFrameRef.current);
+      composerLiftFrameRef.current = null;
+    }
+    if (composerKeyboardResetTimerRef.current) {
+      clearTimeout(composerKeyboardResetTimerRef.current);
+      composerKeyboardResetTimerRef.current = null;
+    }
+    animateComposerAutoLiftTo(0, true);
+  }
+
+  function updateComposerAutoLift() {
+    if (!keyboardVisibleRef.current) {
+      resetComposerAutoLift();
+      return;
+    }
+
+    if (composerLiftFrameRef.current !== null) {
+      cancelAnimationFrame(composerLiftFrameRef.current);
+    }
+
+    const measureId = composerLiftMeasureIdRef.current + 1;
+    composerLiftMeasureIdRef.current = measureId;
+    composerLiftFrameRef.current = requestAnimationFrame(() => {
+      composerLiftFrameRef.current = null;
+      if (!keyboardVisibleRef.current || measureId !== composerLiftMeasureIdRef.current) {
+        return;
+      }
+      composerDockRef.current?.measureInWindow((_x, y, _width, height) => {
+        if (!keyboardVisibleRef.current || measureId !== composerLiftMeasureIdRef.current) {
+          return;
+        }
+        const desiredGap = compactWindow ? Math.max(4, COMPOSER_VISIBLE_BOTTOM_GAP - 3) : COMPOSER_VISIBLE_BOTTOM_GAP;
+        const bottomGap = windowHeight - (y + height);
+        const currentLift = composerAutoLiftCurrentRef.current;
+        const maxLift = Math.max(0, Math.round(windowHeight * 0.35));
+        const nextLift = Math.min(maxLift, Math.max(0, Math.round(currentLift + desiredGap - bottomGap)));
+        animateComposerAutoLiftTo(nextLift, nextLift === 0);
+      });
+    });
   }
 
   function ensureConversation(): ConversationRecord {
@@ -1114,6 +1779,9 @@ export default function App() {
       settingsPanelCloseFallbackRef.current = null;
     }
     settingsPanelTranslateX.stopAnimation();
+    settingsContentProgress.stopAnimation();
+    settingsContentProgress.setValue(1);
+    setSettingsContentMotion('forward');
     settingsReturnTargetRef.current = returnTarget;
     setDraftProfile(activeProfile);
     resetApiProfileEditor(activeProfile);
@@ -1144,14 +1812,161 @@ export default function App() {
       }
       setSettingsVisible(false);
       setSettingsSection('root');
+      settingsContentProgress.setValue(1);
+      setSettingsContentMotion('forward');
       settingsReturnTargetRef.current = 'chat';
     };
     settingsPanelCloseFallbackRef.current = setTimeout(finishClose, 260);
     Animated.timing(settingsPanelTranslateX, {
       toValue: settingsPanelHiddenOffsetRef.current,
       duration: 160,
+      easing: Easing.in(Easing.cubic),
       useNativeDriver: true,
     }).start(finishClose);
+  }
+
+  function animateSettingsContentIn(motion: 'forward' | 'rootEnter') {
+    const animationId = settingsContentAnimationIdRef.current + 1;
+    settingsContentAnimationIdRef.current = animationId;
+    settingsContentProgress.stopAnimation();
+    setSettingsContentMotion(motion);
+    settingsContentProgress.setValue(0);
+    requestAnimationFrame(() => {
+      if (settingsContentAnimationIdRef.current !== animationId) {
+        return;
+      }
+      Animated.timing(settingsContentProgress, {
+        toValue: 1,
+        duration: 190,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+  }
+
+  function navigateToSettingsSection(section: SettingsSection) {
+    if (settingsSection === section) {
+      return;
+    }
+    setSettingsSection(section);
+    animateSettingsContentIn(section === 'root' ? 'rootEnter' : 'forward');
+  }
+
+  function goBackFromSettings() {
+    if (settingsSection !== 'root') {
+      const animationId = settingsContentAnimationIdRef.current + 1;
+      settingsContentAnimationIdRef.current = animationId;
+      settingsContentProgress.stopAnimation();
+      setSettingsContentMotion('back');
+      Animated.timing(settingsContentProgress, {
+        toValue: 0,
+        duration: 150,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (!finished || settingsContentAnimationIdRef.current !== animationId) {
+          return;
+        }
+        setSettingsSection('root');
+        animateSettingsContentIn('rootEnter');
+      });
+      return;
+    }
+    closeSettingsPanel();
+  }
+
+  function openBottomSheet(mode: 'models' | 'profiles') {
+    const animationId = bottomSheetAnimationIdRef.current + 1;
+    bottomSheetAnimationIdRef.current = animationId;
+    if (bottomSheetCloseFallbackRef.current) {
+      clearTimeout(bottomSheetCloseFallbackRef.current);
+      bottomSheetCloseFallbackRef.current = null;
+    }
+    if (bottomSheetContentTimerRef.current) {
+      clearTimeout(bottomSheetContentTimerRef.current);
+      bottomSheetContentTimerRef.current = null;
+    }
+    bottomSheetTranslateY.stopAnimation();
+    bottomSheetBackdropOpacity.stopAnimation();
+    bottomSheetTranslateY.setValue(Math.max(windowHeight, 420));
+    bottomSheetBackdropOpacity.setValue(0);
+    setBottomSheetContentReady(mode !== 'profiles');
+    setBottomSheetMode(mode);
+    setModelPickerVisible(mode === 'models');
+    setApiProfilesVisible(mode === 'profiles');
+    if (mode === 'profiles') {
+      bottomSheetContentTimerRef.current = setTimeout(() => {
+        if (bottomSheetAnimationIdRef.current === animationId) {
+          setBottomSheetContentReady(true);
+        }
+        bottomSheetContentTimerRef.current = null;
+      }, 210);
+    }
+    requestAnimationFrame(() => {
+      Animated.parallel([
+        Animated.timing(bottomSheetBackdropOpacity, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(bottomSheetTranslateY, {
+          toValue: 0,
+          duration: 190,
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished && bottomSheetAnimationIdRef.current === animationId) {
+          bottomSheetTranslateY.setValue(0);
+          bottomSheetBackdropOpacity.setValue(1);
+        }
+      });
+    });
+  }
+
+  function closeBottomSheet(animate = true) {
+    const animationId = bottomSheetAnimationIdRef.current + 1;
+    bottomSheetAnimationIdRef.current = animationId;
+    if (bottomSheetCloseFallbackRef.current) {
+      clearTimeout(bottomSheetCloseFallbackRef.current);
+    }
+    if (bottomSheetContentTimerRef.current) {
+      clearTimeout(bottomSheetContentTimerRef.current);
+      bottomSheetContentTimerRef.current = null;
+    }
+    bottomSheetTranslateY.stopAnimation();
+    bottomSheetBackdropOpacity.stopAnimation();
+    const finishClose = () => {
+      if (bottomSheetAnimationIdRef.current !== animationId) {
+        return;
+      }
+      if (bottomSheetCloseFallbackRef.current) {
+        clearTimeout(bottomSheetCloseFallbackRef.current);
+        bottomSheetCloseFallbackRef.current = null;
+      }
+      bottomSheetTranslateY.setValue(Math.max(windowHeight, 420));
+      bottomSheetBackdropOpacity.setValue(0);
+      setBottomSheetMode(null);
+      setModelPickerVisible(false);
+      setApiProfilesVisible(false);
+      setBottomSheetContentReady(true);
+    };
+    if (!animate) {
+      finishClose();
+      return;
+    }
+    bottomSheetCloseFallbackRef.current = setTimeout(finishClose, 260);
+    Animated.parallel([
+      Animated.timing(bottomSheetBackdropOpacity, {
+        toValue: 0,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+      Animated.timing(bottomSheetTranslateY, {
+        toValue: Math.max(windowHeight, 420),
+        duration: 190,
+        useNativeDriver: true,
+      }),
+    ]).start(finishClose);
   }
 
   function handleSettingsTouchStart(event: GestureResponderEvent) {
@@ -1169,13 +1984,13 @@ export default function App() {
     const { pageX, pageY } = event.nativeEvent;
     const dx = pageX - start.x;
     const dy = pageY - start.y;
-    if (Math.abs(dx) <= 72 || Math.abs(dx) <= Math.abs(dy) * 1.25) {
+    if (!isLooseDirectionalDelta(dx, dy, 'right', 56)) {
       return false;
     }
 
     if (dx > 0) {
       settingsTouchHasClosedRef.current = true;
-      closeSettingsPanel();
+      goBackFromSettings();
       return true;
     }
 
@@ -1191,11 +2006,64 @@ export default function App() {
     settingsTouchHasClosedRef.current = false;
   }
 
+  function settleSessionDrawerAfterTouch() {
+    if (!sessionTouchActiveRef.current) {
+      return;
+    }
+
+    const shouldClose = sessionTouchLastDxRef.current < -SESSION_CLOSE_SWIPE_MIN_DISTANCE;
+    if (shouldClose) {
+      closeSessionsDrawer();
+      return;
+    }
+
+    Animated.timing(sessionDrawerTranslateX, {
+      toValue: 0,
+      duration: 170,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function handleSessionTouchStart(event: GestureResponderEvent) {
+    const { pageX, pageY } = event.nativeEvent;
+    sessionTouchStartRef.current = { x: pageX, y: pageY };
+    sessionTouchActiveRef.current = false;
+    sessionTouchLastDxRef.current = 0;
+    sessionDrawerTranslateX.stopAnimation();
+  }
+
+  function handleSessionTouchMove(event: GestureResponderEvent) {
+    const start = sessionTouchStartRef.current;
+    if (!start) {
+      return;
+    }
+
+    const { pageX, pageY } = event.nativeEvent;
+    const dx = pageX - start.x;
+    const dy = pageY - start.y;
+    if (!sessionTouchActiveRef.current && !isSensitiveSessionCloseDelta(dx, dy)) {
+      return;
+    }
+
+    sessionTouchActiveRef.current = true;
+    sessionTouchLastDxRef.current = dx;
+    sessionDrawerTranslateX.setValue(Math.max(-sessionDrawerHiddenOffsetRef.current, Math.min(0, dx)));
+  }
+
+  function handleSessionTouchEnd() {
+    settleSessionDrawerAfterTouch();
+    sessionTouchStartRef.current = null;
+    sessionTouchActiveRef.current = false;
+    sessionTouchLastDxRef.current = 0;
+  }
+
   function openApiProfiles() {
-    setDraftProfile(activeProfile);
-    loadProfileApiKey(activeProfile.id).then(setApiKey).catch(() => setApiKey(''));
-    resetApiProfileEditor(activeProfile);
-    setApiProfilesVisible(true);
+    const profile = activeProfile;
+    setDraftProfile(profile);
+    resetApiProfileEditor(profile);
+    navigateToSettingsSection('api');
+    loadProfileApiKey(profile.id).then(setApiKey).catch(() => setApiKey(''));
   }
 
   async function selectDraftApiProfile(profile: ApiProfile) {
@@ -1226,11 +2094,77 @@ export default function App() {
     }));
   }
 
+  function applyThemeMode(themeMode: ThemeMode) {
+    setPersisted((current) => ({
+      ...current,
+      themeMode,
+    }));
+  }
+
+  async function checkLatestVersion() {
+    setCheckingVersion(true);
+    try {
+      const response = await fetch(LATEST_RELEASE_URL, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`GitHub HTTP ${response.status}`);
+      }
+      const payload = await response.json() as { tag_name?: string; html_url?: string; name?: string };
+      const latest = (payload.tag_name || payload.name || '').replace(/^v/i, '').trim();
+      if (!latest) {
+        throw new Error('No release tag');
+      }
+      if (compareVersions(latest, APP_VERSION) > 0) {
+        const buttons: AlertButton[] = [{ text: copy.close, style: 'cancel' }];
+        if (payload.html_url) {
+          buttons.push({
+            text: copy.github,
+            onPress: () => openExternalUrl(payload.html_url as string),
+          });
+        }
+        Alert.alert(copy.latestVersionTitle, copy.latestVersionAvailable(latest), buttons);
+      } else {
+        Alert.alert(copy.latestVersionTitle, `${copy.latestVersionCurrent}\n\n${copy.versionLabel}: v${APP_VERSION}`);
+      }
+    } catch {
+      Alert.alert(copy.latestVersionFailedTitle, copy.latestVersionFailedMessage);
+    } finally {
+      setCheckingVersion(false);
+    }
+  }
+
   async function handleSaveApiProfile() {
-    const profile = sanitizeProfile(draftProfile);
+    let profile = sanitizeProfile(draftProfile);
     setSavingProfile(true);
     try {
-      await saveProfileApiKey(profile.id, apiKey.trim());
+      const key = apiKey.trim();
+      await saveProfileApiKey(profile.id, key);
+      const nextReasoningEfforts = getCachedReasoningEffortsForProfile({
+        ...profile,
+        cachedReasoningEfforts: inferReasoningEffortOptions(profile),
+      });
+      profile = {
+        ...profile,
+        cachedReasoningEfforts: nextReasoningEfforts,
+      };
+      if (key) {
+        try {
+          const result = await fetchAvailableModels({ profile, apiKey: key });
+          profile = {
+            ...profile,
+            cachedModels: uniqueStrings([profile.model, ...result.models]),
+          };
+        } catch {
+          profile = {
+            ...profile,
+            cachedModels: getCachedModelsForProfile(profile),
+          };
+        }
+      }
       setPersisted((current) => {
         const profiles = upsertProfile(current.profiles, profile);
         return {
@@ -1241,7 +2175,9 @@ export default function App() {
         };
       });
       setDraftProfile(profile);
-      setApiProfilesVisible(false);
+      setAvailableModels(getCachedModelsForProfile(profile));
+      setReasoningEffortOptions(getCachedReasoningEffortsForProfile(profile));
+      closeBottomSheet();
     } finally {
       setSavingProfile(false);
     }
@@ -1249,7 +2185,8 @@ export default function App() {
 
   function resetApiProfileEditor(profile: ApiProfile) {
     setAdvancedApiSettingsOpen(profileHasAdvancedValues(profile));
-    setReasoningEffortOptions(uniqueStrings(['none', profile.reasoningEffort]) as ReasoningEffort[]);
+    setAvailableModels(getCachedModelsForProfile(profile));
+    setReasoningEffortOptions(getCachedReasoningEffortsForProfile(profile));
     setReasoningEffortsFetched(false);
   }
 
@@ -1257,6 +2194,10 @@ export default function App() {
     const options = inferReasoningEffortOptions(profile);
     setReasoningEffortOptions(options);
     setReasoningEffortsFetched(true);
+    setDraftProfile((current) => ({
+      ...current,
+      cachedReasoningEfforts: options,
+    }));
 
     if (!options.includes(profile.reasoningEffort)) {
       setDraftProfile((current) => ({ ...current, reasoningEffort: options[0] ?? 'none' }));
@@ -1265,11 +2206,22 @@ export default function App() {
 
   function updateDraftProfileWithReasoningReset(updater: (current: ApiProfile) => ApiProfile) {
     setReasoningEffortsFetched(false);
-    setDraftProfile(updater);
+    setDraftProfile((current) => {
+      const next = updater(current);
+      return {
+        ...next,
+        cachedModels: getCachedModelsForProfile(next),
+        cachedReasoningEfforts: getCachedReasoningEffortsForProfile(next),
+      };
+    });
   }
 
   function applyReasoningEffort(effort: ReasoningEffort) {
-    setDraftProfile((current) => ({ ...current, reasoningEffort: effort }));
+    setDraftProfile((current) => ({
+      ...current,
+      reasoningEffort: effort,
+      cachedReasoningEfforts: uniqueStrings([effort, ...(current.cachedReasoningEfforts ?? [])]) as ReasoningEffort[],
+    }));
     setReasoningEffortOptions((current) => uniqueStrings([effort, ...current]) as ReasoningEffort[]);
   }
 
@@ -1425,7 +2377,42 @@ export default function App() {
     setFetchingModels(true);
     try {
       const result = await fetchAvailableModels({ profile, apiKey: key.trim() });
-      setAvailableModels(result.models);
+      const nextModels = uniqueStrings([profile.model, ...result.models]);
+      setAvailableModels(nextModels);
+      setPersisted((current) => {
+        const currentProfile = current.profiles.find((item) => item.id === profile.id) ?? getActiveProfile(current);
+        const updatedProfile = { ...currentProfile, cachedModels: nextModels };
+        const profiles = upsertProfile(current.profiles, updatedProfile);
+        return {
+          ...current,
+          profiles,
+          profile: current.activeProfileId === updatedProfile.id ? updatedProfile : current.profile,
+        };
+      });
+      if (result.models.length === 0) {
+        Alert.alert(copy.modelPickerTitle, copy.modelsEmpty);
+      }
+    } catch (error) {
+      Alert.alert(copy.modelsFetchFailed, error instanceof Error ? error.message : copy.modelsFetchFailed);
+    } finally {
+      setFetchingModels(false);
+    }
+  }
+
+  async function fetchModelsForDraftProfile() {
+    const profile = sanitizeProfile(draftProfile);
+    const key = apiKey.trim();
+    if (!key) {
+      Alert.alert(copy.apiKeyRequiredTitle, copy.apiKeyRequiredMessage);
+      return;
+    }
+
+    setFetchingModels(true);
+    try {
+      const result = await fetchAvailableModels({ profile, apiKey: key });
+      const nextModels = uniqueStrings([profile.model, ...result.models]);
+      setAvailableModels(nextModels);
+      setDraftProfile((current) => ({ ...current, model: profile.model, cachedModels: nextModels }));
       if (result.models.length === 0) {
         Alert.alert(copy.modelPickerTitle, copy.modelsEmpty);
       }
@@ -1437,11 +2424,8 @@ export default function App() {
   }
 
   function openModelPicker() {
-    setAvailableModels((current) => uniqueStrings([activeProfile.model, draftProfile.model, ...MODEL_SUGGESTIONS, ...current]));
-    setModelPickerVisible(true);
-    if (apiKey.trim()) {
-      void fetchModelsForProfile(activeProfile, apiKey);
-    }
+    setAvailableModels(getCachedModelsForProfile(activeProfile));
+    openBottomSheet('models');
   }
 
   function applyModelToActiveProfile(model: string) {
@@ -1451,7 +2435,7 @@ export default function App() {
     }
     setPersisted((current) => {
       const profile = getActiveProfile(current);
-      const updatedProfile: ApiProfile = { ...profile, model: nextModel };
+      const updatedProfile: ApiProfile = { ...profile, model: nextModel, cachedModels: uniqueStrings([nextModel, ...(profile.cachedModels ?? [])]) };
       const profiles = upsertProfile(current.profiles, updatedProfile);
       return {
         ...current,
@@ -1460,7 +2444,7 @@ export default function App() {
       };
     });
     setDraftProfile((current) => ({ ...current, model: nextModel }));
-    setModelPickerVisible(false);
+    closeBottomSheet();
   }
 
   function flushStreamingText() {
@@ -1471,7 +2455,7 @@ export default function App() {
     }
 
     const nextText = streamingTextRef.current;
-    shouldScrollToBottomRef.current = true;
+    scheduleStreamingScroll();
     skipNextPersistRef.current = true;
     setPersisted((current) => ({
       ...current,
@@ -1500,10 +2484,33 @@ export default function App() {
     }, STREAMING_FLUSH_INTERVAL_MS);
   }
 
+  function scheduleStreamingScroll() {
+    if (!sending || !streamingMessageIdRef.current) {
+      return;
+    }
+    if (!autoFollowScrollRef.current) {
+      return;
+    }
+    if (streamingScrollTimerRef.current) {
+      return;
+    }
+
+    streamingScrollTimerRef.current = setTimeout(() => {
+      streamingScrollTimerRef.current = null;
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      });
+    }, STREAMING_SCROLL_INTERVAL_MS);
+  }
+
   function clearStreamingFlushTimer() {
     if (streamingFlushTimerRef.current) {
       clearTimeout(streamingFlushTimerRef.current);
       streamingFlushTimerRef.current = null;
+    }
+    if (streamingScrollTimerRef.current) {
+      clearTimeout(streamingScrollTimerRef.current);
+      streamingScrollTimerRef.current = null;
     }
   }
 
@@ -1795,6 +2802,220 @@ export default function App() {
     }
   }
 
+  async function editUserMessage(messageId: string, nextText: string) {
+    if (sending || !activeConversation) {
+      return;
+    }
+    const trimmed = nextText.trim();
+    if (!trimmed || !apiKey.trim()) {
+      if (!apiKey.trim()) {
+        openSettings();
+        Alert.alert(copy.apiKeyRequiredTitle, copy.apiKeyRequiredMessage);
+      }
+      return;
+    }
+
+    const userIndex = activeConversation.messages.findIndex(
+      (message) => message.id === messageId && message.role === 'user'
+    );
+    if (userIndex < 0) {
+      return;
+    }
+
+    const currentUserMessage = activeConversation.messages[userIndex];
+    const assistantIndex = activeConversation.messages.findIndex(
+      (message, index) => index > userIndex && message.role === 'assistant'
+    );
+    const currentAssistantMessage = assistantIndex >= 0 ? activeConversation.messages[assistantIndex] : undefined;
+    const variants = normalizeMessageVariants(currentUserMessage, currentAssistantMessage);
+    const nextVariantIndex = variants.length;
+    const editedUserMessage: ChatMessage = {
+      ...currentUserMessage,
+      text: trimmed,
+      attachments: currentUserMessage.attachments,
+      activeVariantIndex: nextVariantIndex,
+      variants: [
+        ...variants,
+        {
+          id: makeId('variant'),
+          text: trimmed,
+          createdAt: new Date().toISOString(),
+          attachments: currentUserMessage.attachments,
+        },
+      ],
+    };
+    const previousMessages = activeConversation.messages.slice(0, userIndex);
+    const afterAssistantIndex = assistantIndex >= 0 ? assistantIndex + 1 : userIndex + 1;
+    const suffixMessages = activeConversation.messages.slice(afterAssistantIndex);
+    const removedMessages = assistantIndex >= 0
+      ? [activeConversation.messages[assistantIndex], ...suffixMessages]
+      : suffixMessages;
+    const previousResponseId =
+      [...previousMessages].reverse().find((message) => message.role === 'assistant' && message.responseId)?.responseId ??
+      null;
+    const contextConversation: ConversationRecord = {
+      ...activeConversation,
+      messages: previousMessages,
+      previousResponseId,
+    };
+    const streamingAssistantMessage = createAssistantMessage('', '');
+    const optimisticConversation: ConversationRecord = {
+      ...activeConversation,
+      model: activeProfile.model,
+      assistantKind: classifyModel(activeProfile.model),
+      updatedAt: new Date().toISOString(),
+      messages: [...previousMessages, editedUserMessage, streamingAssistantMessage],
+      previousResponseId,
+    };
+
+    await deleteAttachmentRecords(removedMessages.flatMap((message) => message.attachments)).catch(() => undefined);
+    updateConversations(upsertConversation(persisted.conversations, optimisticConversation), activeConversation.id);
+    setChatMenuVisible(false);
+    setAttachmentMenuVisible(false);
+    setSending(true);
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    streamingTextRef.current = '';
+    streamingConversationIdRef.current = activeConversation.id;
+    streamingMessageIdRef.current = streamingAssistantMessage.id;
+
+    try {
+      const turn = await createAssistantTurn({
+        profile: activeProfile,
+        apiKey: apiKey.trim(),
+        conversation: contextConversation,
+        nextUserMessage: editedUserMessage,
+        signal: abortController.signal,
+        onTextDelta: (delta) => {
+          streamingTextRef.current += delta;
+          scheduleStreamingFlush();
+        },
+      });
+      clearStreamingFlushTimer();
+      const assistantMessage: ChatMessage = {
+        ...streamingAssistantMessage,
+        text: turn.assistantText || streamingTextRef.current || '(empty response)',
+        responseId: turn.responseId,
+        attachments: turn.attachments,
+        createdAt: new Date().toISOString(),
+      };
+      const completedUserMessage: ChatMessage = {
+        ...editedUserMessage,
+        variants: editedUserMessage.variants?.map((variant, index) =>
+          index === nextVariantIndex
+            ? {
+                ...variant,
+                assistantMessageId: assistantMessage.id,
+                assistantText: assistantMessage.text,
+                assistantResponseId: assistantMessage.responseId,
+                assistantError: assistantMessage.error,
+              }
+            : variant
+        ),
+      };
+      const completedConversation: ConversationRecord = {
+        ...optimisticConversation,
+        previousResponseId: turn.responseId,
+        updatedAt: assistantMessage.createdAt,
+        messages: [...previousMessages, completedUserMessage, assistantMessage],
+      };
+      updateConversations(upsertConversation(persisted.conversations, completedConversation), activeConversation.id);
+    } catch (error) {
+      clearStreamingFlushTimer();
+      const assistantMessage: ChatMessage = {
+        ...streamingAssistantMessage,
+        text: streamingTextRef.current || (abortController.signal.aborted ? copy.generationStopped : 'Request failed.'),
+        createdAt: new Date().toISOString(),
+        error: abortController.signal.aborted ? undefined : formatApiError(error),
+      };
+      const failedUserMessage: ChatMessage = {
+        ...editedUserMessage,
+        variants: editedUserMessage.variants?.map((variant, index) =>
+          index === nextVariantIndex
+            ? {
+                ...variant,
+                assistantMessageId: assistantMessage.id,
+                assistantText: assistantMessage.text,
+                assistantResponseId: assistantMessage.responseId,
+                assistantError: assistantMessage.error,
+              }
+            : variant
+        ),
+      };
+      const failedConversation: ConversationRecord = {
+        ...optimisticConversation,
+        updatedAt: assistantMessage.createdAt,
+        messages: [...previousMessages, failedUserMessage, assistantMessage],
+      };
+      updateConversations(upsertConversation(persisted.conversations, failedConversation), activeConversation.id);
+      if (!abortController.signal.aborted) {
+        Alert.alert(copy.sendFailed, assistantMessage.error ?? copy.sendFailed);
+      }
+    } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
+      streamingConversationIdRef.current = null;
+      streamingMessageIdRef.current = null;
+      streamingTextRef.current = '';
+      setSending(false);
+    }
+  }
+
+  function switchUserMessageVariant(messageId: string, direction: -1 | 1) {
+    if (!activeConversation) {
+      return;
+    }
+    const userIndex = activeConversation.messages.findIndex(
+      (message) => message.id === messageId && message.role === 'user'
+    );
+    if (userIndex < 0) {
+      return;
+    }
+    const currentUserMessage = activeConversation.messages[userIndex];
+    const assistantIndex = activeConversation.messages.findIndex(
+      (message, index) => index > userIndex && message.role === 'assistant'
+    );
+    const currentAssistantMessage = assistantIndex >= 0 ? activeConversation.messages[assistantIndex] : undefined;
+    const variants = normalizeMessageVariants(currentUserMessage, currentAssistantMessage);
+    if (variants.length <= 1) {
+      return;
+    }
+    const currentIndex = Math.min(Math.max(currentUserMessage.activeVariantIndex ?? 0, 0), variants.length - 1);
+    const nextIndex = (currentIndex + direction + variants.length) % variants.length;
+    const nextVariant = variants[nextIndex];
+    const nextUserMessage: ChatMessage = {
+      ...currentUserMessage,
+      text: nextVariant.text,
+      createdAt: nextVariant.createdAt,
+      attachments: nextVariant.attachments,
+      variants,
+      activeVariantIndex: nextIndex,
+    };
+    const nextMessages = [...activeConversation.messages];
+    nextMessages[userIndex] = nextUserMessage;
+    if (assistantIndex >= 0) {
+      nextMessages[assistantIndex] = {
+        ...nextMessages[assistantIndex],
+        text: nextVariant.assistantText ?? '',
+        responseId: nextVariant.assistantResponseId,
+        error: nextVariant.assistantError,
+      };
+    }
+    const previousResponseId =
+      [...nextMessages].reverse().find((message) => message.role === 'assistant' && message.responseId)?.responseId ??
+      null;
+    updateConversations(
+      upsertConversation(persisted.conversations, {
+        ...activeConversation,
+        previousResponseId,
+        updatedAt: new Date().toISOString(),
+        messages: nextMessages,
+      }),
+      activeConversation.id
+    );
+  }
+
   regenerateAssistantMessageRef.current = (messageId: string) => {
     void regenerateAssistantMessage(messageId);
   };
@@ -1814,6 +3035,7 @@ export default function App() {
   function openSessionsDrawer() {
     const animationId = sessionDrawerAnimationIdRef.current + 1;
     sessionDrawerAnimationIdRef.current = animationId;
+    sessionDrawerClosingRef.current = false;
     setChatMenuVisible(false);
     setAttachmentMenuVisible(false);
     if (sessionDrawerCloseFallbackRef.current) {
@@ -1825,25 +3047,29 @@ export default function App() {
       sessionDrawerTranslateX.setValue(-sessionDrawerHiddenOffsetRef.current);
     }
     setSessionsVisible(true);
-    Animated.timing(sessionDrawerTranslateX, {
-      toValue: 0,
-      duration: 160,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished && sessionDrawerAnimationIdRef.current === animationId) {
-        sessionDrawerTranslateX.setValue(0);
-      }
+    requestAnimationFrame(() => {
+      Animated.timing(sessionDrawerTranslateX, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished && sessionDrawerAnimationIdRef.current === animationId) {
+          sessionDrawerTranslateX.setValue(0);
+        }
+      });
     });
   }
 
   function closeSessionsDrawer(animate = true) {
+    if (animate && sessionDrawerClosingRef.current) {
+      return;
+    }
+
     const animationId = sessionDrawerAnimationIdRef.current + 1;
     sessionDrawerAnimationIdRef.current = animationId;
+    sessionDrawerClosingRef.current = animate;
     drawerGestureOpeningRef.current = false;
-    if (drawerGestureFallbackRef.current) {
-      clearTimeout(drawerGestureFallbackRef.current);
-      drawerGestureFallbackRef.current = null;
-    }
     if (sessionDrawerCloseFallbackRef.current) {
       clearTimeout(sessionDrawerCloseFallbackRef.current);
     }
@@ -1856,10 +3082,14 @@ export default function App() {
         clearTimeout(sessionDrawerCloseFallbackRef.current);
         sessionDrawerCloseFallbackRef.current = null;
       }
+      sessionDrawerClosingRef.current = false;
       sessionDrawerTranslateX.setValue(-sessionDrawerHiddenOffsetRef.current);
       setSessionsVisible(false);
       setSessionSelectionMode(false);
       setSelectedSessionIds([]);
+      setSessionSearchVisible(false);
+      setSessionSearchQuery('');
+      setSessionSearchRaised(false);
     };
     if (!animate) {
       finishClose();
@@ -1868,7 +3098,8 @@ export default function App() {
     sessionDrawerCloseFallbackRef.current = setTimeout(finishClose, 260);
     Animated.timing(sessionDrawerTranslateX, {
       toValue: -sessionDrawerHiddenOffsetRef.current,
-      duration: 160,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start(finishClose);
   }
@@ -1903,6 +3134,51 @@ export default function App() {
     Alert.alert(copy.copySelectedSessions, copy.copiedSessionExport);
     setSessionSelectionMode(false);
     setSelectedSessionIds([]);
+  }
+
+  function toggleSessionSearch() {
+    setSessionSearchVisible((visible) => {
+      if (visible) {
+        setSessionSearchQuery('');
+        setSessionSearchRaised(false);
+      }
+      return !visible;
+    });
+  }
+
+  async function deleteSelectedSessions() {
+    const selectedIds = new Set(selectedSessionIds);
+    if (selectedIds.size === 0) {
+      return;
+    }
+
+    const selectedConversations = persisted.conversations.filter((conversation) => selectedIds.has(conversation.id));
+    await deleteAttachmentRecords(selectedConversations.flatMap(getConversationAttachments)).catch(() => undefined);
+    const conversations = persisted.conversations.filter((conversation) => !selectedIds.has(conversation.id));
+    const nextActiveId = selectedIds.has(persisted.activeConversationId ?? '')
+      ? conversations[0]?.id ?? null
+      : persisted.activeConversationId;
+    updateConversations(conversations, nextActiveId);
+    setSelectedSessionIds([]);
+    setSessionSelectionMode(false);
+  }
+
+  function confirmDeleteSelectedSessions() {
+    const count = selectedSessionIds.length;
+    if (count === 0) {
+      return;
+    }
+
+    Alert.alert(copy.deleteSessionTitle, copy.selectedSessionsDeleteMessage(count), [
+      { text: copy.cancel, style: 'cancel' },
+      {
+        text: copy.delete,
+        style: 'destructive',
+        onPress: () => {
+          void deleteSelectedSessions();
+        },
+      },
+    ]);
   }
 
   function togglePinConversation(conversationId: string) {
@@ -2037,8 +3313,7 @@ export default function App() {
       setPendingAttachments([]);
       closeSettingsPanel({ returnToDrawer: false });
       closeSessionsDrawer(false);
-      setApiProfilesVisible(false);
-      setModelPickerVisible(false);
+      closeBottomSheet(false);
       setSettingsSection('root');
     } catch (error) {
       Alert.alert(copy.clearFailed, error instanceof Error ? error.message : copy.clearFailedFallback);
@@ -2068,11 +3343,6 @@ export default function App() {
         subtitle: `${activeProfile.label} · ${activeProfile.model}`,
       },
       {
-        key: 'plugins',
-        title: copy.pluginsSection,
-        subtitle: copy.pluginsDescription,
-      },
-      {
         key: 'storage',
         title: copy.storageSection,
         subtitle: copy.localStorageTitle,
@@ -2081,6 +3351,16 @@ export default function App() {
         key: 'language',
         title: copy.language,
         subtitle: uiLanguage === 'zh' ? copy.chinese : copy.english,
+      },
+      {
+        key: 'theme',
+        title: copy.themeSection,
+        subtitle:
+          persisted.themeMode === 'dark'
+            ? copy.themeDark
+            : persisted.themeMode === 'light'
+              ? copy.themeLight
+              : copy.themeSystem,
       },
       {
         key: 'about',
@@ -2094,22 +3374,22 @@ export default function App() {
         {items.map((item) => (
           <Pressable
             key={item.key}
-            style={styles.settingsNavItem}
+            style={[styles.settingsNavItem, { backgroundColor: theme.surfaceAlt, borderColor: theme.border }]}
             onPress={() => {
               if (item.key === 'api') {
                 openApiProfiles();
                 return;
               }
-              setSettingsSection(item.key);
+              navigateToSettingsSection(item.key);
             }}
           >
             <View style={styles.settingsNavText}>
-              <Text style={styles.settingsNavTitle}>{item.title}</Text>
-              <Text style={styles.settingsNavSubtitle} numberOfLines={1}>
+              <Text style={[styles.settingsNavTitle, { color: theme.text }]}>{item.title}</Text>
+              <Text style={[styles.settingsNavSubtitle, { color: theme.muted }]} numberOfLines={1}>
                 {item.subtitle}
               </Text>
             </View>
-            <Text style={styles.settingsNavArrow}>›</Text>
+                <DirectionIcon direction="right" color={theme.muted} />
           </Pressable>
         ))}
       </>
@@ -2126,61 +3406,66 @@ export default function App() {
     );
   }
 
-  const composerDisabled = sending;
+  const composerDisabled = false;
   const canSend = !!composerText.trim() || pendingAttachments.length > 0;
   const usingInsecureHttp = draftProfile.baseUrl.trim().toLowerCase().startsWith('http://');
+  const themedPanel = { backgroundColor: theme.surfaceAlt, borderColor: theme.border };
+  const themedFieldInput = { backgroundColor: theme.surfaceAlt, borderColor: theme.border, color: theme.text };
+  const themedSelected = { backgroundColor: theme.primarySoft, borderColor: theme.primary };
+  const themedMutedText = { color: theme.muted };
+  const themedSubtleText = { color: theme.subtle };
 
   return (
-    <LinearGradient colors={['#FFFFFF', '#F6F8FB', '#EEF3F8']} style={styles.root}>
-        <StatusBar barStyle="dark-content" />
+    <LinearGradient colors={theme.gradient} style={styles.root}>
+        <StatusBar barStyle={theme.statusBar} />
+      <Animated.View style={[styles.mainScene, { transform: [{ translateX: chatSceneTranslateX }] }]}>
         <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          enabled={Platform.OS === 'ios'}
           keyboardVerticalOffset={0}
           style={styles.flex}
         >
-          <View style={styles.topBar}>
+          <View style={[styles.topBar, { paddingTop: topBarExtraInset }]}>
             <Pressable
-              style={styles.iconAction}
+              style={[styles.iconAction, { backgroundColor: theme.surface, borderColor: theme.border }]}
               onPress={openSessionsDrawer}
               accessibilityRole="button"
               accessibilityLabel={copy.openSessions}
             >
-              <Text style={styles.menuIconText}>☰</Text>
+              <MenuIcon color={theme.text} />
             </Pressable>
             <Pressable style={styles.sessionSwitcher} onPress={openModelPicker}>
-              <View style={styles.modelPill}>
-                <Text style={styles.title} numberOfLines={1}>{activeProfile.model}</Text>
-                <Text style={styles.modelPillChevron}>v</Text>
+              <View style={[styles.modelPill, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <Text style={[styles.title, { color: theme.text }]} numberOfLines={1}>{activeProfile.model}</Text>
               </View>
-              <Text style={styles.sessionLine} numberOfLines={1}>
-                {activeSessionTitle} · {activeProfile.label}
-              </Text>
             </Pressable>
             <View style={styles.topActions}>
               <Pressable
-                style={styles.iconAction}
+                style={[styles.iconAction, { backgroundColor: theme.surface, borderColor: theme.border }]}
                 onPress={createNewSession}
                 accessibilityRole="button"
                 accessibilityLabel={copy.newSession}
               >
-                <Text style={styles.iconActionText}>+</Text>
+                <PlusIcon color={theme.text} />
               </Pressable>
               <Pressable
-                style={styles.iconAction}
+                style={[styles.iconAction, { backgroundColor: theme.surface, borderColor: theme.border }]}
                 onPress={() => setChatMenuVisible((visible) => !visible)}
                 accessibilityRole="button"
                 accessibilityLabel="Conversation menu"
               >
-                <Text style={styles.iconActionText}>⋯</Text>
+                <MoreIcon color={theme.text} />
               </Pressable>
             </View>
           </View>
 
-          {chatMenuVisible && (
-            <>
-              <Pressable style={styles.chatMenuDismiss} onPress={() => setChatMenuVisible(false)} />
-              <View style={styles.chatMenu}>
+          {chatMenuVisible && <Pressable style={styles.chatMenuDismiss} onPress={() => setChatMenuVisible(false)} />}
+          <SlideFadePresence
+            visible={chatMenuVisible}
+            from="top"
+            style={[styles.chatMenu, { backgroundColor: theme.surface, borderColor: theme.border }]}
+          >
                 <Pressable
                   style={[styles.chatMenuItem, !activeConversation && styles.disabledAction]}
                   onPress={() => {
@@ -2188,7 +3473,7 @@ export default function App() {
                   }}
                   disabled={!activeConversation}
                 >
-                  <Text style={styles.chatMenuText}>{uiLanguage === 'zh' ? '分享' : 'Share'}</Text>
+                  <Text style={[styles.chatMenuText, { color: theme.text }]}>{uiLanguage === 'zh' ? '分享' : 'Share'}</Text>
                 </Pressable>
                 <Pressable
                   style={[styles.chatMenuItem, !activeConversation && styles.disabledAction]}
@@ -2197,9 +3482,7 @@ export default function App() {
                 >
                   <Text style={[styles.chatMenuText, styles.chatMenuDangerText]}>{copy.delete}</Text>
                 </Pressable>
-              </View>
-            </>
-          )}
+          </SlideFadePresence>
 
           <View style={styles.chatShell} {...chatOpenDrawerPanResponder.panHandlers}>
             <ScrollView
@@ -2208,6 +3491,9 @@ export default function App() {
               contentContainerStyle={styles.chatContent}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              onScroll={handleChatScroll}
+              scrollEventThrottle={80}
+              onContentSizeChange={scheduleStreamingScroll}
             >
               {activeConversation ? (
                 activeConversation.messages.length > 0 ? (
@@ -2216,26 +3502,37 @@ export default function App() {
                       key={message.id}
                       message={message}
                       language={uiLanguage}
+                      colorScheme={theme.scheme}
                       isStreaming={sending && message.id === streamingMessageIdRef.current}
                       onRegenerate={handleRegenerateMessage}
+                      onEditUserMessage={editUserMessage}
+                      onSwitchVariant={switchUserMessageVariant}
                     />
                   ))
                 ) : (
                   <View style={styles.emptyStateCard}>
-                    <Text style={styles.emptyStateTitle}>{activeConversation.title}</Text>
-                    <Text style={styles.emptyStateText}>{copy.emptyStateBody}</Text>
+                    <Text style={[styles.emptyStateTitle, { color: theme.text }]}>{activeConversation.title}</Text>
+                    <Text style={[styles.emptyStateText, { color: theme.muted }]}>{copy.emptyStateBody}</Text>
                   </View>
                 )
               ) : (
                 <View style={styles.emptyStateCard}>
-                  <Text style={styles.emptyStateTitle}>{copy.noActiveSessionTitle}</Text>
-                  <Text style={styles.emptyStateText}>{copy.noActiveSessionBody}</Text>
+                  <Text style={[styles.emptyStateTitle, { color: theme.text }]}>{copy.noActiveSessionTitle}</Text>
+                  <Text style={[styles.emptyStateText, { color: theme.muted }]}>{copy.noActiveSessionBody}</Text>
                 </View>
               )}
 
             </ScrollView>
 
-            <View style={styles.composerCard}>
+            <Animated.View
+              ref={composerDockRef}
+              onLayout={updateComposerAutoLift}
+              style={[
+                styles.composerDock,
+                { marginBottom: composerBottomInset },
+                { transform: [{ translateY: composerLiftTranslateY }] },
+              ]}
+            >
               {pendingAttachments.length > 0 && (
                 <ScrollView
                   horizontal
@@ -2245,76 +3542,102 @@ export default function App() {
                   {pendingAttachments.map((attachment) => (
                     <Pressable
                       key={attachment.id}
-                      style={styles.pendingChip}
+                      style={[styles.pendingChip, themedPanel]}
                       onPress={() => removePendingAttachment(attachment.id)}
                     >
-                      <Text style={styles.pendingChipType}>{attachment.kind.toUpperCase()}</Text>
-                      <Text style={styles.pendingChipText} numberOfLines={1}>
+                      <Text style={[styles.pendingChipType, { color: theme.primary }]}>{attachment.kind.toUpperCase()}</Text>
+                      <Text style={[styles.pendingChipText, { color: theme.subtle }]} numberOfLines={1}>
                         {attachment.name}
                       </Text>
                     </Pressable>
                   ))}
                 </ScrollView>
               )}
-              <View style={styles.composerRow}>
-                <View style={styles.attachMenuWrap}>
-                  <Pressable
-                    style={[styles.smallAction, attachmentMenuVisible && styles.smallActionActive]}
-                    onPress={() => setAttachmentMenuVisible((visible) => !visible)}
-                    disabled={composerDisabled}
-                    accessibilityRole="button"
-                    accessibilityLabel={copy.attachMenu}
-                  >
-                    <Text style={styles.smallActionText}>+</Text>
-                  </Pressable>
-                </View>
-                <TextInput
-                  value={composerText}
-                  onChangeText={setComposerText}
-                  editable={!composerDisabled}
-                  multiline
-                  scrollEnabled
-                  placeholder={copy.composerPlaceholder}
-                  placeholderTextColor="#78869D"
-                  style={styles.composerInput}
-                />
+                <View style={styles.composerRow}>
                 <Pressable
                   style={[
-                    styles.sendAction,
-                    (!sending && !canSend) && styles.disabledAction,
+                    styles.attachButton,
+                    { backgroundColor: theme.surfaceAlt, borderColor: attachmentMenuVisible ? theme.primary : theme.border },
+                    attachmentMenuVisible && styles.attachButtonActive,
                   ]}
-                  onPress={sending ? handleStopGenerating : handleSend}
-                  disabled={!sending && !canSend}
+                  onPress={() => setAttachmentMenuVisible((visible) => !visible)}
+                  disabled={composerDisabled}
                   accessibilityRole="button"
-                  accessibilityLabel={sending ? copy.stopGenerating : copy.send}
+                  accessibilityLabel={copy.attachMenu}
                 >
-                  <Text style={styles.sendActionText}>{sending ? '■' : '↑'}</Text>
+                  <PlusIcon color={theme.text} />
                 </Pressable>
-              </View>
-              {attachmentMenuVisible && !composerDisabled && (
-                <View style={styles.attachOptionRow}>
-                  <Pressable style={styles.attachOption} onPress={attachFromCamera}>
-                    <Text style={styles.attachOptionIcon}>{uiLanguage === 'zh' ? '拍' : 'Cam'}</Text>
-                    <Text style={styles.attachOptionText}>{copy.camera}</Text>
+                <View style={[styles.composerInputWrap, { backgroundColor: theme.input, borderColor: theme.border }]}>
+                  {composerNeedsExpand && (
+                    <Pressable
+                      style={styles.composerExpandButton}
+                      onPress={() => setComposerExpanded(true)}
+                      disabled={composerDisabled}
+                      accessibilityRole="button"
+                      accessibilityLabel={copy.expandComposer}
+                    >
+                      <Maximize2 size={17} color={theme.subtle} strokeWidth={2.2} />
+                    </Pressable>
+                  )}
+                  <Pressable
+                    style={[styles.composerOverlayButton, styles.composerOverlaySend, (!sending && !canSend) && styles.disabledAction]}
+                    onPress={sending ? handleStopGenerating : handleSend}
+                    disabled={!sending && !canSend}
+                    accessibilityRole="button"
+                    accessibilityLabel={sending ? copy.stopGenerating : copy.send}
+                  >
+                    {sending ? <StopIcon /> : <SendIcon />}
                   </Pressable>
-                  <Pressable style={styles.attachOption} onPress={attachImages}>
-                    <Text style={styles.attachOptionIcon}>{uiLanguage === 'zh' ? '图' : 'Img'}</Text>
-                    <Text style={styles.attachOptionText}>{copy.image}</Text>
-                  </Pressable>
-                  <Pressable style={styles.attachOption} onPress={attachFiles}>
-                    <Text style={styles.attachOptionIcon}>{uiLanguage === 'zh' ? '文' : 'Doc'}</Text>
-                    <Text style={styles.attachOptionText}>{copy.file}</Text>
-                  </Pressable>
+                  <TextInput
+                    value={composerText}
+                    onChangeText={setComposerText}
+                    onFocus={() => {
+                      keyboardVisibleRef.current = true;
+                      updateComposerAutoLift();
+                    }}
+                    onBlur={resetComposerAutoLift}
+                    editable={!composerDisabled}
+                    multiline
+                    scrollEnabled
+                    placeholder={copy.composerPlaceholder}
+                    placeholderTextColor={theme.placeholder}
+                    style={[
+                      styles.composerInput,
+                      styles.composerInputWithActions,
+                      composerSingleLine && styles.composerInputSingleLine,
+                      { color: theme.text },
+                    ]}
+                    textAlignVertical={composerSingleLine ? 'center' : 'top'}
+                  />
                 </View>
-              )}
-            </View>
+              </View>
+              <SlideFadePresence
+                visible={attachmentMenuVisible && !composerDisabled}
+                from="bottom"
+                style={styles.attachOptionRow}
+              >
+                  <Pressable style={[styles.attachOption, { backgroundColor: theme.surface, borderColor: theme.border }]} onPress={attachFromCamera}>
+                    <Camera size={18} color="#2563EB" strokeWidth={2.3} />
+                    <Text style={[styles.attachOptionText, { color: theme.text }]}>{copy.camera}</Text>
+                  </Pressable>
+                  <Pressable style={[styles.attachOption, { backgroundColor: theme.surface, borderColor: theme.border }]} onPress={attachImages}>
+                    <ImageIcon size={18} color="#2563EB" strokeWidth={2.3} />
+                    <Text style={[styles.attachOptionText, { color: theme.text }]}>{copy.image}</Text>
+                  </Pressable>
+                  <Pressable style={[styles.attachOption, { backgroundColor: theme.surface, borderColor: theme.border }]} onPress={attachFiles}>
+                    <FileText size={18} color="#2563EB" strokeWidth={2.3} />
+                    <Text style={[styles.attachOptionText, { color: theme.text }]}>{copy.file}</Text>
+                  </Pressable>
+              </SlideFadePresence>
+            </Animated.View>
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </Animated.View>
 
-      <Modal visible={settingsVisible} animationType="none" onRequestClose={() => closeSettingsPanel()}>
+      <Modal visible={settingsVisible} animationType="none" onRequestClose={goBackFromSettings}>
         <Animated.View
-          style={[styles.settingsScreen, { transform: [{ translateX: settingsPanelTranslateX }] }]}
+          style={[styles.settingsScreen, { backgroundColor: theme.surface, transform: [{ translateX: settingsPanelTranslateX }] }]}
           onStartShouldSetResponderCapture={() => false}
           onMoveShouldSetResponderCapture={(event) => maybeNavigateSettingsFromTouch(event)}
           onTouchStart={handleSettingsTouchStart}
@@ -2322,26 +3645,28 @@ export default function App() {
           onTouchEnd={handleSettingsTouchEnd}
           onTouchCancel={handleSettingsTouchEnd}
         >
-          <SafeAreaView style={styles.settingsScreenSafe}>
+          <SafeAreaView style={[styles.settingsScreenSafe, { paddingTop: modalTopInset, backgroundColor: theme.surface }]}>
             <View style={styles.settingsHeader}>
               {settingsSection !== 'root' && (
-                <Pressable style={styles.backButton} onPress={() => setSettingsSection('root')}>
-                  <Text style={styles.backButtonText}>‹</Text>
+                <Pressable style={[styles.backButton, { backgroundColor: theme.surfaceAlt, borderColor: theme.border }]} onPress={goBackFromSettings}>
+                  <DirectionIcon direction="left" color={theme.muted} />
                 </Pressable>
               )}
               <View style={styles.modalHeading}>
-                <Text style={styles.modalTitle}>
+                <Text style={[styles.modalTitle, { color: theme.text }]}>
                   {settingsSection === 'root'
                     ? copy.settingsTitle
+                    : settingsSection === 'api'
+                      ? copy.apiSection
                     : settingsSection === 'language'
                       ? copy.language
+                      : settingsSection === 'theme'
+                        ? copy.themeSection
                       : settingsSection === 'storage'
                         ? copy.storageSection
-                        : settingsSection === 'plugins'
-                          ? copy.pluginsSection
-                          : copy.aboutSection}
+                        : copy.aboutSection}
                 </Text>
-                <Text style={styles.modalSubtitle}>{copy.settingsSubtitle}</Text>
+                <Text style={[styles.modalSubtitle, { color: theme.muted }]}>{copy.settingsSubtitle}</Text>
               </View>
             </View>
 
@@ -2351,41 +3676,365 @@ export default function App() {
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
             >
+              <Animated.View
+                style={[
+                  styles.settingsContentScene,
+                  {
+                    opacity: settingsContentProgress,
+                    transform: [{ translateX: settingsContentTranslateX }],
+                  },
+                ]}
+              >
               {settingsSection === 'root' && renderSettingsRoot()}
 
-              {settingsSection === 'language' && (
-                <View style={styles.settingOptionGroup}>
+              {settingsSection === 'api' && (
+                <>
+                  <View style={styles.formSectionHeader}>
+                    <Text style={[styles.sectionLabel, { color: theme.primary }]}>{copy.apiProfilesTitle}</Text>
+                    <Pressable style={styles.modalPrimarySmall} onPress={createNewApiProfile}>
+                      <Text style={styles.modalPrimaryText}>{copy.newApiProfile}</Text>
+                    </Pressable>
+                  </View>
+                  <Text style={[styles.inlineHint, themedMutedText]}>{copy.apiProfilesSubtitle}</Text>
+
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.profileChipRow}>
+                    {persisted.profiles.map((profile) => {
+                      const isActive = profile.id === persisted.activeProfileId;
+                      const isEditing = profile.id === draftProfile.id;
+                      return (
+                        <Pressable
+                          key={profile.id}
+                          style={[
+                            styles.profileChip,
+                            themedPanel,
+                            isEditing && [styles.profileChipSelected, themedSelected],
+                          ]}
+                          onPress={() => {
+                            void selectDraftApiProfile(profile);
+                          }}
+                        >
+                          <Text style={[styles.profileChipTitle, { color: theme.text }, isEditing && { color: theme.primary }]}>
+                            {profile.label}
+                          </Text>
+                          <Text style={[styles.profileChipMeta, { color: theme.muted }, isEditing && { color: theme.primary }]} numberOfLines={1}>
+                            {isActive ? copy.activeApiProfile : profile.model}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <View style={styles.formSectionHeader}>
+                    <Text style={[styles.sectionLabel, { color: theme.primary }]}>{copy.basicApiSettings}</Text>
+                    <Text style={[styles.sectionValue, themedMutedText]} numberOfLines={1}>
+                      {draftProfile.model}
+                    </Text>
+                  </View>
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.profileLabel}</Text>
+                  <TextInput
+                    value={draftProfile.label}
+                    onChangeText={(value) => setDraftProfile((current) => ({ ...current, label: value }))}
+                    style={[styles.fieldInput, themedFieldInput]}
+                    placeholder="My API"
+                    placeholderTextColor={theme.placeholder}
+                  />
+
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.apiPreset}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+                    {API_PRESETS.map((preset) => {
+                      const selected =
+                        draftProfile.apiProtocol === preset.apiProtocol &&
+                        draftProfile.baseUrl === preset.baseUrl &&
+                        draftProfile.model === preset.model;
+                      return (
+                        <Pressable
+                          key={preset.id}
+                          style={[styles.suggestionChip, themedPanel, selected && [styles.selectedChip, themedSelected]]}
+                          onPress={() => updateDraftProfileWithReasoningReset((current) => applyApiPreset(current, preset))}
+                        >
+                          <Text style={[styles.suggestionChipText, themedSubtleText, selected && { color: theme.primary }]}>
+                            {preset.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.endpointMode}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+                    {API_PROTOCOL_OPTIONS.map((protocol) => (
+                      <Pressable
+                        key={protocol}
+                        style={[styles.suggestionChip, themedPanel, draftProfile.apiProtocol === protocol && [styles.selectedChip, themedSelected]]}
+                        onPress={() => updateDraftProfileWithReasoningReset((current) => ({ ...current, apiProtocol: protocol }))}
+                      >
+                        <Text style={[styles.suggestionChipText, themedSubtleText, draftProfile.apiProtocol === protocol && { color: theme.primary }]}>
+                          {apiProtocolLabel(protocol, uiLanguage)}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                  <Text style={[styles.inlineHint, themedMutedText]}>{getEndpointHint(draftProfile.apiProtocol, uiLanguage)}</Text>
+
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.baseUrl}</Text>
+                  <TextInput
+                    value={draftProfile.baseUrl}
+                    onChangeText={(value) => setDraftProfile((current) => ({ ...current, baseUrl: value }))}
+                    style={[styles.fieldInput, themedFieldInput]}
+                    autoCapitalize="none"
+                    placeholder="https://api.openai.com/v1"
+                    placeholderTextColor={theme.placeholder}
+                  />
+                  <Text style={[styles.inlineHint, themedMutedText]}>{copy.baseUrlHint}</Text>
+                  {usingInsecureHttp && <Text style={styles.warningText}>{copy.insecureHttpWarning}</Text>}
+
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.apiKey}</Text>
+                  <TextInput
+                    value={apiKey}
+                    onChangeText={setApiKey}
+                    style={[styles.fieldInput, themedFieldInput]}
+                    autoCapitalize="none"
+                    secureTextEntry
+                    placeholder="sk-..."
+                    placeholderTextColor={theme.placeholder}
+                  />
+
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.model}</Text>
+                  <TextInput
+                    value={draftProfile.model}
+                    onChangeText={(value) => updateDraftProfileWithReasoningReset((current) => ({ ...current, model: value }))}
+                    style={[styles.fieldInput, themedFieldInput]}
+                    autoCapitalize="none"
+                    placeholder="gpt-5.4"
+                    placeholderTextColor={theme.placeholder}
+                  />
                   <Pressable
-                    style={[styles.settingOption, uiLanguage === 'zh' && styles.settingOptionSelected]}
+                    style={[styles.inlineUtilityButton, themedPanel, fetchingModels && styles.disabledAction]}
+                    onPress={() => {
+                      void fetchModelsForDraftProfile();
+                    }}
+                    disabled={fetchingModels}
+                  >
+                    <Text style={[styles.inlineUtilityButtonText, { color: theme.primary }]}>
+                      {fetchingModels ? copy.fetchingModels : copy.fetchModels}
+                    </Text>
+                  </Pressable>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+                    {uniqueStrings([draftProfile.model, ...(draftProfile.cachedModels ?? []), ...availableModels, ...MODEL_SUGGESTIONS]).map((model) => (
+                      <Pressable
+                        key={model}
+                        style={[styles.suggestionChip, themedPanel, draftProfile.model === model && [styles.selectedChip, themedSelected]]}
+                        onPress={() => updateDraftProfileWithReasoningReset((current) => ({ ...current, model }))}
+                      >
+                        <Text style={[styles.suggestionChipText, themedSubtleText, draftProfile.model === model && { color: theme.primary }]}>
+                          {model}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                  <Text style={[styles.inlineHint, themedMutedText]}>{getModelHint(draftProfile.model, uiLanguage)}</Text>
+
+                  <View style={[styles.compactSettingCard, themedPanel]}>
+                    <View style={styles.compactSettingHeader}>
+                      <View style={styles.compactSettingTitleWrap}>
+                        <Text style={[styles.compactSettingTitle, { color: theme.text }]}>{copy.reasoningEffort}</Text>
+                        <Text style={[styles.compactSettingSubtitle, themedMutedText]}>
+                          {copy.currentValue}: {draftProfile.reasoningEffort}
+                        </Text>
+                      </View>
+                      <Pressable style={[styles.inlineUtilityButton, { backgroundColor: theme.surface, borderColor: theme.border }]} onPress={() => refreshReasoningEffortOptions(draftProfile)}>
+                        <Text style={[styles.inlineUtilityButtonText, { color: theme.primary }]}>{copy.fetchReasoningEfforts}</Text>
+                      </Pressable>
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+                      {reasoningEffortOptions.map((effort) => (
+                        <Pressable
+                          key={effort}
+                          style={[styles.suggestionChip, { backgroundColor: theme.surface, borderColor: theme.border }, draftProfile.reasoningEffort === effort && [styles.selectedChip, themedSelected]]}
+                          onPress={() => applyReasoningEffort(effort)}
+                        >
+                          <Text style={[styles.suggestionChipText, themedSubtleText, draftProfile.reasoningEffort === effort && { color: theme.primary }]}>
+                            {effort}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                    <Text style={[styles.inlineHint, themedMutedText]}>
+                      {reasoningEffortsFetched
+                        ? inferReasoningEffortOptions(draftProfile).length > 1
+                          ? copy.reasoningEffortsReady
+                          : copy.reasoningEffortsUnavailable
+                        : getReasoningEffortHint(draftProfile.model, draftProfile.reasoningEffort, uiLanguage)}
+                    </Text>
+                  </View>
+
+                  <Pressable
+                    style={[styles.advancedToggle, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                    onPress={() => setAdvancedApiSettingsOpen((current) => !current)}
+                  >
+                    <View style={styles.advancedToggleTextWrap}>
+                      <Text style={[styles.advancedToggleTitle, { color: theme.text }]}>{copy.advancedApiSettings}</Text>
+                      <Text style={[styles.advancedToggleSubtitle, themedMutedText]} numberOfLines={1}>
+                        {getAdvancedApiSummary(draftProfile)}
+                      </Text>
+                    </View>
+                    <Text style={[styles.advancedToggleAction, { color: theme.primary }]}>
+                      {advancedApiSettingsOpen ? copy.hideAdvancedSettings : copy.showAdvancedSettings}
+                    </Text>
+                  </Pressable>
+
+                  <SlideFadePresence visible={advancedApiSettingsOpen} from="top" style={[styles.advancedPanel, themedPanel]}>
+                      {draftProfile.apiProtocol === 'responses' && (
+                        <>
+                          <View style={styles.switchRow}>
+                            <View style={styles.switchTextWrap}>
+                              <Text style={[styles.switchTitle, { color: theme.text }]}>{copy.responseStorage}</Text>
+                              <Text style={[styles.switchSubtitle, themedMutedText]}>
+                                {draftProfile.storeResponses ? copy.storageEnabled : copy.storageDisabled}
+                              </Text>
+                            </View>
+                            <Pressable
+                              style={[styles.compactSwitch, draftProfile.storeResponses && styles.compactSwitchOn]}
+                              onPress={() => setDraftProfile((current) => ({ ...current, storeResponses: !current.storeResponses }))}
+                            >
+                              <View style={[styles.compactSwitchThumb, draftProfile.storeResponses && styles.compactSwitchThumbOn]} />
+                            </Pressable>
+                          </View>
+                          <Text style={[styles.inlineHint, themedMutedText]}>
+                            {getProtocolStorageHint(draftProfile.apiProtocol, draftProfile.storeResponses, uiLanguage)}
+                          </Text>
+                        </>
+                      )}
+
+                      <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.projectId}</Text>
+                      <TextInput
+                        value={draftProfile.projectId}
+                        onChangeText={(value) => setDraftProfile((current) => ({ ...current, projectId: value }))}
+                        style={[styles.fieldInput, themedFieldInput]}
+                        autoCapitalize="none"
+                        placeholder="Optional"
+                        placeholderTextColor={theme.placeholder}
+                      />
+
+                      <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.organization}</Text>
+                      <TextInput
+                        value={draftProfile.organization}
+                        onChangeText={(value) => setDraftProfile((current) => ({ ...current, organization: value }))}
+                        style={[styles.fieldInput, themedFieldInput]}
+                        autoCapitalize="none"
+                        placeholder="Optional"
+                        placeholderTextColor={theme.placeholder}
+                      />
+
+                      <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.systemPrompt}</Text>
+                      <TextInput
+                        value={draftProfile.systemPrompt}
+                        onChangeText={(value) => setDraftProfile((current) => ({ ...current, systemPrompt: value }))}
+                        style={[styles.fieldInput, themedFieldInput, styles.fieldInputMultiline]}
+                        multiline
+                        placeholder="Optional long-lived instruction"
+                        placeholderTextColor={theme.placeholder}
+                      />
+                      <Text style={[styles.inlineHint, themedMutedText]}>{copy.advancedConfigHint}</Text>
+                  </SlideFadePresence>
+
+                  <View style={styles.profileUtilityRow}>
+                    <Pressable
+                      style={[styles.secondaryActionCard, themedPanel, testingProfile && styles.disabledAction]}
+                      onPress={handleTestApiProfile}
+                      disabled={testingProfile || savingProfile}
+                    >
+                      <Text style={[styles.secondaryActionLabel, { color: theme.text }]}>
+                        {testingProfile ? copy.testingApiConnection : copy.testApiConnection}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.dangerButtonCompact}
+                      onPress={() => confirmDeleteApiProfile(draftProfile.id)}
+                      disabled={testingProfile || savingProfile}
+                    >
+                      <Text style={styles.dangerButtonText}>{copy.deleteApiProfile}</Text>
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.modalActions}>
+                    <Pressable
+                      style={[styles.modalPrimary, savingProfile && styles.disabledAction]}
+                      onPress={handleSaveApiProfile}
+                      disabled={savingProfile}
+                    >
+                      <Text style={styles.modalPrimaryText}>{savingProfile ? copy.saving : copy.done}</Text>
+                    </Pressable>
+                  </View>
+                </>
+              )}
+
+              {settingsSection === 'language' && (
+                <View style={[styles.settingOptionGroup, { backgroundColor: theme.surfaceAlt, borderColor: theme.border }]}>
+                  <Pressable
+                    style={[
+                      styles.settingOption,
+                      { borderBottomColor: theme.border },
+                      uiLanguage === 'zh' && [styles.settingOptionSelected, themedSelected],
+                    ]}
                     onPress={() => applyUiLanguage('zh')}
                   >
-                    <View style={[styles.settingOptionRadio, uiLanguage === 'zh' && styles.settingOptionRadioSelected]}>
+                    <View style={[styles.settingOptionRadio, { backgroundColor: theme.surface, borderColor: theme.border }, uiLanguage === 'zh' && styles.settingOptionRadioSelected]}>
                       {uiLanguage === 'zh' && <View style={styles.settingOptionRadioDot} />}
                     </View>
-                    <Text style={styles.settingOptionText}>{copy.chinese}</Text>
+                    <Text style={[styles.settingOptionText, { color: theme.text }]}>{copy.chinese}</Text>
                   </Pressable>
                   <Pressable
-                    style={[styles.settingOption, uiLanguage === 'en' && styles.settingOptionSelected]}
+                    style={[
+                      styles.settingOption,
+                      { borderBottomColor: theme.border },
+                      uiLanguage === 'en' && [styles.settingOptionSelected, themedSelected],
+                    ]}
                     onPress={() => applyUiLanguage('en')}
                   >
-                    <View style={[styles.settingOptionRadio, uiLanguage === 'en' && styles.settingOptionRadioSelected]}>
+                    <View style={[styles.settingOptionRadio, { backgroundColor: theme.surface, borderColor: theme.border }, uiLanguage === 'en' && styles.settingOptionRadioSelected]}>
                       {uiLanguage === 'en' && <View style={styles.settingOptionRadioDot} />}
                     </View>
-                    <Text style={styles.settingOptionText}>{copy.english}</Text>
+                    <Text style={[styles.settingOptionText, { color: theme.text }]}>{copy.english}</Text>
                   </Pressable>
+                </View>
+              )}
+
+              {settingsSection === 'theme' && (
+                <View style={[styles.settingOptionGroup, { backgroundColor: theme.surfaceAlt, borderColor: theme.border }]}>
+                  {([
+                    { mode: 'system' as const, label: copy.themeSystem },
+                    { mode: 'light' as const, label: copy.themeLight },
+                    { mode: 'dark' as const, label: copy.themeDark },
+                  ]).map((option) => (
+                    <Pressable
+                      key={option.mode}
+                      style={[
+                        styles.settingOption,
+                        { borderBottomColor: theme.border },
+                        persisted.themeMode === option.mode && [styles.settingOptionSelected, themedSelected],
+                      ]}
+                      onPress={() => applyThemeMode(option.mode)}
+                    >
+                      <View style={[styles.settingOptionRadio, { backgroundColor: theme.surface, borderColor: theme.border }, persisted.themeMode === option.mode && styles.settingOptionRadioSelected]}>
+                        {persisted.themeMode === option.mode && <View style={styles.settingOptionRadioDot} />}
+                      </View>
+                      <Text style={[styles.settingOptionText, { color: theme.text }]}>{option.label}</Text>
+                    </Pressable>
+                  ))}
                 </View>
               )}
 
               {settingsSection === 'storage' && (
                 <>
-                  <View style={styles.infoPanel}>
-                    <Text style={styles.infoPanelTitle}>{copy.localStorageTitle}</Text>
-                    <Text style={styles.infoPanelText}>{copy.localStorageDescription}</Text>
+                  <View style={[styles.infoPanel, { backgroundColor: theme.surfaceAlt, borderColor: theme.border }]}>
+                    <Text style={[styles.infoPanelTitle, { color: theme.text }]}>{copy.localStorageTitle}</Text>
+                    <Text style={[styles.infoPanelText, { color: theme.muted }]}>{copy.localStorageDescription}</Text>
                   </View>
                   <Pressable style={styles.dangerButton} onPress={confirmClearLocalData} disabled={savingProfile}>
                     <Text style={styles.dangerButtonText}>{copy.clearLocalData}</Text>
                   </Pressable>
-                  <Text style={styles.inlineHint}>{copy.clearLocalHint}</Text>
+                  <Text style={[styles.inlineHint, { color: theme.muted }]}>{copy.clearLocalHint}</Text>
                 </>
               )}
 
@@ -2404,46 +4053,60 @@ export default function App() {
               )}
 
               {settingsSection === 'about' && (
-                <View style={styles.infoPanel}>
-                  <Text style={styles.infoPanelTitle}>{copy.createdBy}</Text>
-                  <View style={styles.contactRow}>
+                <>
+                  <View style={[styles.infoPanel, { backgroundColor: theme.surfaceAlt, borderColor: theme.border }]}>
+                    <Text style={[styles.infoPanelTitle, { color: theme.text }]}>{copy.createdBy}</Text>
+                    <View style={styles.contactRow}>
+                      <Pressable
+                        style={[styles.contactChip, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                        onPress={() => openExternalUrl('https://github.com/fanshanng')}
+                      >
+                        <GitHubIcon color={theme.text} />
+                        <Text style={[styles.contactText, { color: theme.subtle }]}>fanshanng</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.contactChip, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                        onPress={() => openExternalUrl('https://github.com/HDdssX')}
+                      >
+                        <GitHubIcon color={theme.text} />
+                        <Text style={[styles.contactText, { color: theme.subtle }]}>HDdss</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                  <View style={[styles.infoPanel, { backgroundColor: theme.surfaceAlt, borderColor: theme.border }]}>
+                    <Text style={[styles.infoPanelTitle, { color: theme.text }]}>{copy.versionLabel}</Text>
+                    <Text style={[styles.infoPanelText, { color: theme.muted }]}>v{APP_VERSION}</Text>
                     <Pressable
-                      style={styles.contactChip}
-                      onPress={() => openExternalUrl('https://github.com/fanshanng')}
+                      style={[styles.inlineUtilityButton, themedPanel, styles.versionCheckButton, checkingVersion && styles.disabledAction]}
+                      onPress={() => {
+                        void checkLatestVersion();
+                      }}
+                      disabled={checkingVersion}
                     >
-                      <Text style={styles.contactIcon}>GH</Text>
-                      <Text style={styles.contactText}>{copy.github}</Text>
-                    </Pressable>
-                    <Pressable style={styles.contactChip} onPress={() => openExternalUrl('https://fanshanng.cn/')}>
-                      <Text style={styles.contactIcon}>WWW</Text>
-                      <Text style={styles.contactText}>{copy.blog}</Text>
-                    </Pressable>
-                    <Pressable
-                      style={styles.contactChip}
-                      onPress={() => openExternalUrl('mailto:fanshanng@gmail.com')}
-                    >
-                      <Text style={styles.contactIcon}>@</Text>
-                      <Text style={styles.contactText}>{copy.email}</Text>
+                      <Text style={[styles.inlineUtilityButtonText, { color: theme.primary }]}>
+                        {checkingVersion ? copy.checkingLatestVersion : copy.checkLatestVersion}
+                      </Text>
                     </Pressable>
                   </View>
-                </View>
+                </>
               )}
+              </Animated.View>
             </ScrollView>
           </SafeAreaView>
         </Animated.View>
       </Modal>
 
-      <Modal visible={modelPickerVisible} animationType="slide" transparent onRequestClose={() => setModelPickerVisible(false)}>
-        <View style={styles.modalBackdrop}>
-          <Pressable style={styles.modalDismissArea} onPress={() => setModelPickerVisible(false)} />
-          <View style={styles.modalCardCompact}>
+      <Modal visible={modelPickerVisible} animationType="none" transparent onRequestClose={() => closeBottomSheet()}>
+        <View style={styles.modalSheetRoot} pointerEvents={bottomSheetMode === 'models' ? 'auto' : 'none'}>
+          <Animated.View style={[styles.modalBackdropLayer, { opacity: bottomSheetBackdropOpacity }]} />
+          <Pressable style={styles.modalDismissArea} onPress={() => closeBottomSheet()} />
+          <Animated.View style={[styles.modalCardCompact, { backgroundColor: theme.surface, borderColor: theme.border, transform: [{ translateY: bottomSheetTranslateY }] }]}>
             <View style={styles.sessionHeader}>
               <View style={styles.modalHeading}>
-                <Text style={styles.modalTitle}>{copy.modelPickerTitle}</Text>
-                <Text style={styles.modalSubtitle}>{activeProfile.label} · {activeProfile.baseUrl}</Text>
+                <Text style={[styles.modalTitle, { color: theme.text }]}>{copy.modelPickerTitle}</Text>
               </View>
               <Pressable
-                style={[styles.modalPrimarySmall, fetchingModels && styles.disabledAction]}
+                style={[styles.modalPrimarySmall, styles.modelFetchButton, fetchingModels && styles.disabledAction]}
                 onPress={() => {
                   void fetchModelsForProfile(activeProfile, apiKey);
                 }}
@@ -2458,15 +4121,19 @@ export default function App() {
               contentContainerStyle={styles.modelListContent}
             >
               {availableModels.length === 0 ? (
-                <Text style={styles.emptySessionText}>{copy.modelsEmpty}</Text>
+                <Text style={[styles.emptySessionText, { color: theme.muted }]}>{copy.modelsEmpty}</Text>
               ) : (
                 availableModels.map((model) => (
                   <Pressable
                     key={model}
-                    style={[styles.modelOption, activeProfile.model === model && styles.modelOptionSelected]}
+                    style={[
+                      styles.modelOption,
+                      { backgroundColor: theme.surfaceAlt, borderColor: theme.border },
+                      activeProfile.model === model && [styles.modelOptionSelected, themedSelected],
+                    ]}
                     onPress={() => applyModelToActiveProfile(model)}
                   >
-                    <Text style={[styles.modelOptionText, activeProfile.model === model && styles.modelOptionTextSelected]}>
+                    <Text style={[styles.modelOptionText, { color: theme.text }, activeProfile.model === model && { color: theme.primary }]}>
                       {model}
                     </Text>
                     {activeProfile.model === model && <Text style={styles.profileStateActive}>{copy.activeModel}</Text>}
@@ -2474,69 +4141,79 @@ export default function App() {
                 ))
               )}
             </ScrollView>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
 
-      <Modal visible={apiProfilesVisible} animationType="slide" transparent onRequestClose={() => setApiProfilesVisible(false)}>
-        <View style={styles.modalBackdrop}>
-          <Pressable style={styles.modalDismissArea} onPress={() => setApiProfilesVisible(false)} />
-          <View style={styles.modalCard}>
+      <Modal visible={apiProfilesVisible} animationType="none" transparent onRequestClose={() => closeBottomSheet()}>
+        <View style={styles.modalSheetRoot} pointerEvents={bottomSheetMode === 'profiles' ? 'auto' : 'none'}>
+          <Animated.View style={[styles.modalBackdropLayer, { opacity: bottomSheetBackdropOpacity }]} />
+          <Pressable style={styles.modalDismissArea} onPress={() => closeBottomSheet()} />
+          <Animated.View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border, transform: [{ translateY: bottomSheetTranslateY }] }]}>
             <View style={styles.sessionHeader}>
               <View style={styles.modalHeading}>
-                <Text style={styles.modalTitle}>{copy.apiProfilesTitle}</Text>
-                <Text style={styles.modalSubtitle}>{copy.apiProfilesSubtitle}</Text>
+                <Text style={[styles.modalTitle, { color: theme.text }]}>{copy.apiProfilesTitle}</Text>
+                <Text style={[styles.modalSubtitle, { color: theme.muted }]}>{copy.apiProfilesSubtitle}</Text>
               </View>
               <Pressable style={styles.modalPrimarySmall} onPress={createNewApiProfile}>
                 <Text style={styles.modalPrimaryText}>{copy.newApiProfile}</Text>
               </Pressable>
             </View>
 
-            <ScrollView
-              style={styles.modalScroll}
-              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
-            >
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.profileChipRow}>
-                {persisted.profiles.map((profile) => {
-                  const isActive = profile.id === persisted.activeProfileId;
-                  const isEditing = profile.id === draftProfile.id;
-                  return (
-                    <Pressable
-                      key={profile.id}
-                      style={[styles.profileChip, isEditing && styles.profileChipSelected]}
-                      onPress={() => {
-                        void selectDraftApiProfile(profile);
-                      }}
-                    >
-                      <Text style={[styles.profileChipTitle, isEditing && styles.profileChipTitleSelected]}>
-                        {profile.label}
-                      </Text>
-                      <Text style={[styles.profileChipMeta, isEditing && styles.profileChipMetaSelected]} numberOfLines={1}>
-                        {isActive ? copy.activeApiProfile : profile.model}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
+            {!bottomSheetContentReady ? (
+              <View style={styles.modalWarmup}>
+                <Text style={[styles.modalWarmupText, { color: theme.muted }]}>{copy.loading}</Text>
+              </View>
+            ) : (
+              <ScrollView
+                style={styles.modalScroll}
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled
+              >
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.profileChipRow}>
+                  {persisted.profiles.map((profile) => {
+                    const isActive = profile.id === persisted.activeProfileId;
+                    const isEditing = profile.id === draftProfile.id;
+                    return (
+                      <Pressable
+                        key={profile.id}
+                        style={[
+                          styles.profileChip,
+                          themedPanel,
+                          isEditing && [styles.profileChipSelected, themedSelected],
+                        ]}
+                        onPress={() => {
+                          void selectDraftApiProfile(profile);
+                        }}
+                      >
+                        <Text style={[styles.profileChipTitle, { color: theme.text }, isEditing && { color: theme.primary }]}>
+                          {profile.label}
+                        </Text>
+                        <Text style={[styles.profileChipMeta, { color: theme.muted }, isEditing && { color: theme.primary }]} numberOfLines={1}>
+                          {isActive ? copy.activeApiProfile : profile.model}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
 
               <View style={styles.formSectionHeader}>
-                <Text style={styles.sectionLabel}>{copy.basicApiSettings}</Text>
-                <Text style={styles.sectionValue} numberOfLines={1}>
+                <Text style={[styles.sectionLabel, { color: theme.primary }]}>{copy.basicApiSettings}</Text>
+                <Text style={[styles.sectionValue, themedMutedText]} numberOfLines={1}>
                   {draftProfile.model}
                 </Text>
               </View>
-              <Text style={styles.fieldLabel}>{copy.profileLabel}</Text>
+              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.profileLabel}</Text>
               <TextInput
                 value={draftProfile.label}
                 onChangeText={(value) => setDraftProfile((current) => ({ ...current, label: value }))}
-                style={styles.fieldInput}
+                style={[styles.fieldInput, themedFieldInput]}
                 placeholder="My API"
-                placeholderTextColor="#9BA7B7"
+                placeholderTextColor={theme.placeholder}
               />
 
-              <Text style={styles.fieldLabel}>{copy.apiPreset}</Text>
+              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.apiPreset}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
                 {API_PRESETS.map((preset) => {
                   const selected =
@@ -2546,10 +4223,10 @@ export default function App() {
                   return (
                     <Pressable
                       key={preset.id}
-                      style={[styles.suggestionChip, selected && styles.selectedChip]}
+                      style={[styles.suggestionChip, themedPanel, selected && [styles.selectedChip, themedSelected]]}
                       onPress={() => updateDraftProfileWithReasoningReset((current) => applyApiPreset(current, preset))}
                     >
-                      <Text style={[styles.suggestionChipText, selected && styles.selectedChipText]}>
+                      <Text style={[styles.suggestionChipText, themedSubtleText, selected && { color: theme.primary }]}>
                         {preset.label}
                       </Text>
                     </Pressable>
@@ -2557,18 +4234,19 @@ export default function App() {
                 })}
               </ScrollView>
 
-              <Text style={styles.fieldLabel}>{copy.endpointMode}</Text>
+              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.endpointMode}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
                 {API_PROTOCOL_OPTIONS.map((protocol) => (
                   <Pressable
                     key={protocol}
-                    style={[styles.suggestionChip, draftProfile.apiProtocol === protocol && styles.selectedChip]}
+                    style={[styles.suggestionChip, themedPanel, draftProfile.apiProtocol === protocol && [styles.selectedChip, themedSelected]]}
                     onPress={() => updateDraftProfileWithReasoningReset((current) => ({ ...current, apiProtocol: protocol }))}
                   >
                     <Text
                       style={[
                         styles.suggestionChipText,
-                        draftProfile.apiProtocol === protocol && styles.selectedChipText,
+                        themedSubtleText,
+                        draftProfile.apiProtocol === protocol && { color: theme.primary },
                       ]}
                     >
                       {apiProtocolLabel(protocol, uiLanguage)}
@@ -2576,89 +4254,90 @@ export default function App() {
                   </Pressable>
                 ))}
               </ScrollView>
-              <Text style={styles.inlineHint}>{getEndpointHint(draftProfile.apiProtocol, uiLanguage)}</Text>
+              <Text style={[styles.inlineHint, themedMutedText]}>{getEndpointHint(draftProfile.apiProtocol, uiLanguage)}</Text>
 
-              <Text style={styles.fieldLabel}>{copy.baseUrl}</Text>
+              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.baseUrl}</Text>
               <TextInput
                 value={draftProfile.baseUrl}
                 onChangeText={(value) => setDraftProfile((current) => ({ ...current, baseUrl: value }))}
-                style={styles.fieldInput}
+                style={[styles.fieldInput, themedFieldInput]}
                 autoCapitalize="none"
                 placeholder="https://api.openai.com/v1"
-                placeholderTextColor="#9BA7B7"
+                placeholderTextColor={theme.placeholder}
               />
-              <Text style={styles.inlineHint}>{copy.baseUrlHint}</Text>
+              <Text style={[styles.inlineHint, themedMutedText]}>{copy.baseUrlHint}</Text>
               {usingInsecureHttp && <Text style={styles.warningText}>{copy.insecureHttpWarning}</Text>}
 
-              <Text style={styles.fieldLabel}>{copy.apiKey}</Text>
+              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.apiKey}</Text>
               <TextInput
                 value={apiKey}
                 onChangeText={setApiKey}
-                style={styles.fieldInput}
+                style={[styles.fieldInput, themedFieldInput]}
                 autoCapitalize="none"
                 secureTextEntry
                 placeholder="sk-..."
-                placeholderTextColor="#9BA7B7"
+                placeholderTextColor={theme.placeholder}
               />
 
-              <Text style={styles.fieldLabel}>{copy.model}</Text>
+              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.model}</Text>
               <TextInput
                 value={draftProfile.model}
                 onChangeText={(value) => updateDraftProfileWithReasoningReset((current) => ({ ...current, model: value }))}
-                style={styles.fieldInput}
+                style={[styles.fieldInput, themedFieldInput]}
                 autoCapitalize="none"
                 placeholder="gpt-5.4"
-                placeholderTextColor="#9BA7B7"
+                placeholderTextColor={theme.placeholder}
               />
               <Pressable
-                style={[styles.inlineUtilityButton, fetchingModels && styles.disabledAction]}
+                style={[styles.inlineUtilityButton, themedPanel, fetchingModels && styles.disabledAction]}
                 onPress={() => {
-                  void fetchModelsForProfile(sanitizeProfile(draftProfile), apiKey);
+                  void fetchModelsForDraftProfile();
                 }}
                 disabled={fetchingModels}
               >
-                <Text style={styles.inlineUtilityButtonText}>
+                <Text style={[styles.inlineUtilityButtonText, { color: theme.primary }]}>
                   {fetchingModels ? copy.fetchingModels : copy.fetchModels}
                 </Text>
               </Pressable>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
-                {uniqueStrings([...availableModels, ...MODEL_SUGGESTIONS]).map((model) => (
+                {uniqueStrings([draftProfile.model, ...(draftProfile.cachedModels ?? []), ...availableModels, ...MODEL_SUGGESTIONS]).map((model) => (
                   <Pressable
                     key={model}
-                    style={[styles.suggestionChip, draftProfile.model === model && styles.selectedChip]}
+                    style={[styles.suggestionChip, themedPanel, draftProfile.model === model && [styles.selectedChip, themedSelected]]}
                     onPress={() => updateDraftProfileWithReasoningReset((current) => ({ ...current, model }))}
                   >
-                    <Text style={[styles.suggestionChipText, draftProfile.model === model && styles.selectedChipText]}>
+                    <Text style={[styles.suggestionChipText, themedSubtleText, draftProfile.model === model && { color: theme.primary }]}>
                       {model}
                     </Text>
                   </Pressable>
                 ))}
               </ScrollView>
-              <Text style={styles.inlineHint}>{getModelHint(draftProfile.model, uiLanguage)}</Text>
+              <Text style={[styles.inlineHint, themedMutedText]}>{getModelHint(draftProfile.model, uiLanguage)}</Text>
 
-              <View style={styles.compactSettingCard}>
+              <View style={[styles.compactSettingCard, themedPanel]}>
                 <View style={styles.compactSettingHeader}>
                   <View style={styles.compactSettingTitleWrap}>
-                    <Text style={styles.compactSettingTitle}>{copy.reasoningEffort}</Text>
-                    <Text style={styles.compactSettingSubtitle}>
+                    <Text style={[styles.compactSettingTitle, { color: theme.text }]}>{copy.reasoningEffort}</Text>
+                    <Text style={[styles.compactSettingSubtitle, themedMutedText]}>
                       {copy.currentValue}: {draftProfile.reasoningEffort}
                     </Text>
                   </View>
-                  <Pressable style={styles.inlineUtilityButton} onPress={() => refreshReasoningEffortOptions(draftProfile)}>
-                    <Text style={styles.inlineUtilityButtonText}>{copy.fetchReasoningEfforts}</Text>
+                  <Pressable style={[styles.inlineUtilityButton, { backgroundColor: theme.surface, borderColor: theme.border }]} onPress={() => refreshReasoningEffortOptions(draftProfile)}>
+                    <Text style={[styles.inlineUtilityButtonText, { color: theme.primary }]}>{copy.fetchReasoningEfforts}</Text>
                   </Pressable>
                 </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
                   {reasoningEffortOptions.map((effort) => (
                     <Pressable
                       key={effort}
-                      style={[styles.suggestionChip, draftProfile.reasoningEffort === effort && styles.selectedChip]}
+                      style={[styles.suggestionChip, { backgroundColor: theme.surface, borderColor: theme.border }, draftProfile.reasoningEffort === effort && [styles.selectedChip, themedSelected]]}
                       onPress={() => applyReasoningEffort(effort)}
                     >
                       <Text
                         style={[
                           styles.suggestionChipText,
-                          draftProfile.reasoningEffort === effort && styles.selectedChipText,
+                          themedSubtleText,
+                          draftProfile.reasoningEffort === effort && { color: theme.primary },
                         ]}
                       >
                         {effort}
@@ -2666,7 +4345,7 @@ export default function App() {
                     </Pressable>
                   ))}
                 </ScrollView>
-                <Text style={styles.inlineHint}>
+                <Text style={[styles.inlineHint, themedMutedText]}>
                   {reasoningEffortsFetched
                     ? inferReasoningEffortOptions(draftProfile).length > 1
                       ? copy.reasoningEffortsReady
@@ -2676,12 +4355,12 @@ export default function App() {
               </View>
 
               <Pressable
-                style={styles.advancedToggle}
+                style={[styles.advancedToggle, { backgroundColor: theme.surface, borderColor: theme.border }]}
                 onPress={() => setAdvancedApiSettingsOpen((current) => !current)}
               >
                 <View style={styles.advancedToggleTextWrap}>
-                  <Text style={styles.advancedToggleTitle}>{copy.advancedApiSettings}</Text>
-                  <Text style={styles.advancedToggleSubtitle} numberOfLines={1}>
+                  <Text style={[styles.advancedToggleTitle, { color: theme.text }]}>{copy.advancedApiSettings}</Text>
+                  <Text style={[styles.advancedToggleSubtitle, themedMutedText]} numberOfLines={1}>
                     {getAdvancedApiSummary(draftProfile)}
                   </Text>
                   {/*
@@ -2691,19 +4370,18 @@ export default function App() {
                     {draftProfile.systemPrompt ? ` · ${copy.systemPrompt}` : ''}
                   */}
                 </View>
-                <Text style={styles.advancedToggleAction}>
+                <Text style={[styles.advancedToggleAction, { color: theme.primary }]}>
                   {advancedApiSettingsOpen ? copy.hideAdvancedSettings : copy.showAdvancedSettings}
                 </Text>
               </Pressable>
 
-              {advancedApiSettingsOpen && (
-                <View style={styles.advancedPanel}>
+              <SlideFadePresence visible={advancedApiSettingsOpen} from="top" style={[styles.advancedPanel, themedPanel]}>
                   {draftProfile.apiProtocol === 'responses' && (
                     <>
                       <View style={styles.switchRow}>
                         <View style={styles.switchTextWrap}>
-                          <Text style={styles.switchTitle}>{copy.responseStorage}</Text>
-                          <Text style={styles.switchSubtitle}>
+                          <Text style={[styles.switchTitle, { color: theme.text }]}>{copy.responseStorage}</Text>
+                          <Text style={[styles.switchSubtitle, themedMutedText]}>
                             {draftProfile.storeResponses ? copy.storageEnabled : copy.storageDisabled}
                           </Text>
                         </View>
@@ -2714,208 +4392,311 @@ export default function App() {
                           <View style={[styles.compactSwitchThumb, draftProfile.storeResponses && styles.compactSwitchThumbOn]} />
                         </Pressable>
                       </View>
-                      <Text style={styles.inlineHint}>
+                      <Text style={[styles.inlineHint, themedMutedText]}>
                         {getProtocolStorageHint(draftProfile.apiProtocol, draftProfile.storeResponses, uiLanguage)}
                       </Text>
                     </>
                   )}
 
-                  <Text style={styles.fieldLabel}>{copy.projectId}</Text>
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.projectId}</Text>
                   <TextInput
                     value={draftProfile.projectId}
                     onChangeText={(value) => setDraftProfile((current) => ({ ...current, projectId: value }))}
-                    style={styles.fieldInput}
+                    style={[styles.fieldInput, themedFieldInput]}
                     autoCapitalize="none"
                     placeholder="Optional"
-                    placeholderTextColor="#9BA7B7"
+                    placeholderTextColor={theme.placeholder}
                   />
 
-                  <Text style={styles.fieldLabel}>{copy.organization}</Text>
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.organization}</Text>
                   <TextInput
                     value={draftProfile.organization}
                     onChangeText={(value) => setDraftProfile((current) => ({ ...current, organization: value }))}
-                    style={styles.fieldInput}
+                    style={[styles.fieldInput, themedFieldInput]}
                     autoCapitalize="none"
                     placeholder="Optional"
-                    placeholderTextColor="#9BA7B7"
+                    placeholderTextColor={theme.placeholder}
                   />
 
-                  <Text style={styles.fieldLabel}>{copy.systemPrompt}</Text>
+                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.systemPrompt}</Text>
                   <TextInput
                     value={draftProfile.systemPrompt}
                     onChangeText={(value) => setDraftProfile((current) => ({ ...current, systemPrompt: value }))}
-                    style={[styles.fieldInput, styles.fieldInputMultiline]}
+                    style={[styles.fieldInput, themedFieldInput, styles.fieldInputMultiline]}
                     multiline
                     placeholder="Optional long-lived instruction"
-                    placeholderTextColor="#9BA7B7"
+                    placeholderTextColor={theme.placeholder}
                   />
-                  <Text style={styles.inlineHint}>{copy.advancedConfigHint}</Text>
-                </View>
-              )}
+                  <Text style={[styles.inlineHint, themedMutedText]}>{copy.advancedConfigHint}</Text>
+              </SlideFadePresence>
 
-              <View style={styles.profileUtilityRow}>
-                <Pressable
-                  style={[styles.secondaryActionCard, testingProfile && styles.disabledAction]}
-                  onPress={handleTestApiProfile}
-                  disabled={testingProfile || savingProfile}
-                >
-                  <Text style={styles.secondaryActionLabel}>
-                    {testingProfile ? copy.testingApiConnection : copy.testApiConnection}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={styles.dangerButtonCompact}
-                  onPress={() => confirmDeleteApiProfile(draftProfile.id)}
-                  disabled={testingProfile || savingProfile}
-                >
-                  <Text style={styles.dangerButtonText}>{copy.deleteApiProfile}</Text>
-                </Pressable>
-              </View>
-            </ScrollView>
+                <View style={styles.profileUtilityRow}>
+                  <Pressable
+                    style={[styles.secondaryActionCard, themedPanel, testingProfile && styles.disabledAction]}
+                    onPress={handleTestApiProfile}
+                    disabled={testingProfile || savingProfile}
+                  >
+                    <Text style={[styles.secondaryActionLabel, { color: theme.text }]}>
+                      {testingProfile ? copy.testingApiConnection : copy.testApiConnection}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.dangerButtonCompact}
+                    onPress={() => confirmDeleteApiProfile(draftProfile.id)}
+                    disabled={testingProfile || savingProfile}
+                  >
+                    <Text style={styles.dangerButtonText}>{copy.deleteApiProfile}</Text>
+                  </Pressable>
+                </View>
+              </ScrollView>
+            )}
 
             <View style={styles.modalActions}>
-              <Pressable style={styles.modalGhost} onPress={() => setApiProfilesVisible(false)}>
-                <Text style={styles.modalGhostText}>{copy.close}</Text>
+              <Pressable style={[styles.modalGhost, { borderColor: theme.border }]} onPress={() => closeBottomSheet()}>
+                <Text style={[styles.modalGhostText, { color: theme.subtle }]}>{copy.close}</Text>
               </Pressable>
-              <Pressable style={styles.modalPrimary} onPress={handleSaveApiProfile} disabled={savingProfile}>
+              <Pressable
+                style={[styles.modalPrimary, (!bottomSheetContentReady || savingProfile) && styles.disabledAction]}
+                onPress={handleSaveApiProfile}
+                disabled={!bottomSheetContentReady || savingProfile}
+              >
                 <Text style={styles.modalPrimaryText}>{savingProfile ? copy.saving : copy.done}</Text>
               </Pressable>
             </View>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
 
-      <Modal visible={sessionsVisible} animationType="none" onRequestClose={() => closeSessionsDrawer()}>
-        <Animated.View
-          style={[styles.drawerBackdrop, { transform: [{ translateX: sessionDrawerTranslateX }] }]}
-          {...sessionDrawerPanResponder.panHandlers}
+      <Modal visible={composerExpanded} animationType="slide" onRequestClose={() => setComposerExpanded(false)}>
+        <SafeAreaView style={[styles.fullComposerScreen, { backgroundColor: theme.surface }]}>
+          <View style={styles.fullComposerHeader}>
+            <Pressable style={[styles.fullComposerClose, themedPanel]} onPress={() => setComposerExpanded(false)}>
+              <X size={19} color={theme.text} strokeWidth={2.4} />
+            </Pressable>
+          </View>
+          <TextInput
+            value={composerText}
+            onChangeText={setComposerText}
+            editable={!composerDisabled}
+            multiline
+            autoFocus
+            scrollEnabled
+            placeholder={copy.composerPlaceholder}
+            placeholderTextColor={theme.placeholder}
+            style={[styles.fullComposerInput, themedFieldInput]}
+            textAlignVertical="top"
+          />
+          <View style={styles.fullComposerActions}>
+            <Pressable
+              style={[styles.fullComposerSend, (!sending && !canSend) && styles.disabledAction]}
+              onPress={() => {
+                setComposerExpanded(false);
+                if (sending) {
+                  handleStopGenerating();
+                } else {
+                  void handleSend();
+                }
+              }}
+              disabled={!sending && !canSend}
+            >
+              {sending ? <StopIcon /> : <SendIcon />}
+              <Text style={styles.fullComposerSendText}>{sending ? copy.stopGenerating : copy.send}</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {sessionsVisible && (
+        <View
+          style={styles.drawerModalRoot}
+          pointerEvents="box-none"
+          onTouchStart={handleSessionTouchStart}
+          onTouchMove={handleSessionTouchMove}
+          onTouchEnd={handleSessionTouchEnd}
+          onTouchCancel={handleSessionTouchEnd}
         >
-          <SafeAreaView style={styles.sessionDrawer}>
-            <View style={styles.drawerHeader}>
-              <View style={styles.drawerHeaderTitleBlock}>
-                <Text style={styles.drawerTitle}>{copy.sessionsTitle}</Text>
-                <Text style={styles.drawerHeaderHint}>{copy.latestSessionsFirst}</Text>
+          <Animated.View style={[styles.drawerMainDismissLayer, { transform: [{ translateX: chatSceneTranslateX }] }]}>
+            <Pressable
+              style={styles.drawerUnderlayPressable}
+              onPress={() => closeSessionsDrawer()}
+              {...sessionDrawerPanResponder.panHandlers}
+              onTouchStart={handleSessionTouchStart}
+              onTouchMove={handleSessionTouchMove}
+              onTouchEnd={handleSessionTouchEnd}
+              onTouchCancel={handleSessionTouchEnd}
+            />
+          </Animated.View>
+          <Animated.View
+            style={[styles.drawerBackdrop, { width: sessionDrawerWidth, transform: [{ translateX: sessionDrawerTranslateX }] }]}
+            {...sessionDrawerPanResponder.panHandlers}
+            onTouchStart={handleSessionTouchStart}
+            onTouchMove={handleSessionTouchMove}
+            onTouchEnd={handleSessionTouchEnd}
+            onTouchCancel={handleSessionTouchEnd}
+          >
+            <SafeAreaView
+              style={[styles.sessionDrawer, { backgroundColor: theme.surface }]}
+              onTouchStart={handleSessionTouchStart}
+              onTouchMove={handleSessionTouchMove}
+              onTouchEnd={handleSessionTouchEnd}
+              onTouchCancel={handleSessionTouchEnd}
+            >
+              <View style={[styles.drawerHeader, { paddingTop: drawerTopInset }]}>
+                <View style={styles.drawerHeaderActions}>
+                  <Pressable
+                    style={[
+                      styles.drawerIconButton,
+                      { backgroundColor: theme.surface, borderColor: sessionSearchVisible ? theme.primary : theme.border },
+                      sessionSearchVisible && styles.drawerIconButtonActive,
+                    ]}
+                    onPress={toggleSessionSearch}
+                    accessibilityRole="button"
+                    accessibilityLabel={copy.sessionSearchPlaceholder}
+                  >
+                    <SearchIcon color={theme.text} />
+                  </Pressable>
+                  <Pressable
+                    style={[styles.drawerIconButton, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                    onPress={openSettingsFromSessions}
+                    accessibilityRole="button"
+                    accessibilityLabel={copy.settings}
+                  >
+                    <SettingsIcon color={theme.text} />
+                  </Pressable>
+                </View>
               </View>
+
+              <SlideFadePresence visible={sessionSearchVisible} from="top" style={styles.drawerSearchWrap}>
+                  {sessionSearchNeedsRaise && (
+                    <Pressable
+                      style={[styles.drawerSearchRaiseButton, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                      onPress={() => setSessionSearchRaised((raised) => !raised)}
+                      accessibilityRole="button"
+                      accessibilityLabel={copy.expandComposer}
+                    >
+                      <DirectionIcon direction={sessionSearchIsRaised ? 'down' : 'up'} color={theme.muted} />
+                    </Pressable>
+                  )}
+                  <TextInput
+                    value={sessionSearchQuery}
+                    onChangeText={setSessionSearchQuery}
+                    style={[
+                      styles.drawerSearchInput,
+                      sessionSearchNeedsRaise && styles.drawerSearchInputWithRaise,
+                      sessionSearchIsRaised && styles.drawerSearchInputRaised,
+                      { backgroundColor: theme.surfaceAlt, borderColor: theme.border, color: theme.text },
+                    ]}
+                    placeholder={copy.sessionSearchPlaceholder}
+                    placeholderTextColor={theme.placeholder}
+                    autoFocus
+                    multiline={sessionSearchIsRaised}
+                    scrollEnabled={sessionSearchIsRaised}
+                    textAlignVertical="top"
+                  />
+              </SlideFadePresence>
+
+              <View style={styles.drawerSectionHeader}>
+                <View style={styles.drawerSectionTitleWrap}>
+                  <Text style={[styles.drawerSectionLabel, { color: theme.text }]}>{copy.recordsSection}</Text>
+                </View>
+                <Pressable
+                  style={[
+                    styles.drawerHeaderButton,
+                    { backgroundColor: theme.surface, borderColor: theme.border },
+                    sessionSelectionMode && [styles.drawerHeaderButtonActive, themedSelected],
+                    persisted.conversations.length === 0 && styles.disabledAction,
+                  ]}
+                  onPress={toggleSessionSelectionMode}
+                  disabled={persisted.conversations.length === 0}
+                >
+                  <Text
+                    style={[
+                      styles.drawerHeaderButtonText,
+                      { color: theme.subtle },
+                      sessionSelectionMode && { color: theme.primary },
+                    ]}
+                  >
+                    {sessionSelectionMode ? copy.cancelSelection : copy.selectSessions}
+                  </Text>
+                </Pressable>
+                {sessionSelectionMode && (
+                  <Pressable
+                    style={[styles.drawerCopyButton, selectedSessionIds.length === 0 && styles.disabledAction]}
+                    onPress={() => {
+                      void copySelectedSessionExports();
+                    }}
+                    disabled={selectedSessionIds.length === 0}
+                  >
+                    <Text style={styles.drawerCopyButtonText}>{copy.copySelectedSessions}</Text>
+                  </Pressable>
+                )}
+                {sessionSelectionMode && (
+                  <Pressable
+                    style={[styles.drawerDeleteButton, selectedSessionIds.length === 0 && styles.disabledAction]}
+                    onPress={confirmDeleteSelectedSessions}
+                    disabled={selectedSessionIds.length === 0}
+                  >
+                    <Text style={styles.drawerDeleteButtonText}>{copy.deleteSelectedSessions}</Text>
+                  </Pressable>
+                )}
+              </View>
+              {sessionSelectionMode && (
+                <Text style={[styles.drawerSelectionText, { color: theme.muted }]}>{copy.selectedSessionsCount(selectedSessionIds.length)}</Text>
+              )}
+
+              <FlatList
+                {...sessionDrawerPanResponder.panHandlers}
+                style={styles.drawerHistoryScroll}
+                contentContainerStyle={styles.drawerHistoryContent}
+                data={visibleConversations}
+                keyExtractor={(conversation) => conversation.id}
+                renderItem={renderDrawerSession}
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                keyboardShouldPersistTaps="handled"
+                onTouchStart={handleSessionTouchStart}
+                onTouchMove={handleSessionTouchMove}
+                onTouchEnd={handleSessionTouchEnd}
+                onTouchCancel={handleSessionTouchEnd}
+                nestedScrollEnabled
+                initialNumToRender={8}
+                maxToRenderPerBatch={8}
+                windowSize={7}
+                removeClippedSubviews={Platform.OS === 'android'}
+                ListFooterComponent={
+                  <View
+                    collapsable={false}
+                    style={[styles.drawerHistoryFooterSwipeArea, { minHeight: drawerBlankSwipeFooterHeight }]}
+                    {...sessionDrawerPanResponder.panHandlers}
+                    onTouchStart={handleSessionTouchStart}
+                    onTouchMove={handleSessionTouchMove}
+                    onTouchEnd={handleSessionTouchEnd}
+                    onTouchCancel={handleSessionTouchEnd}
+                  />
+                }
+                ListEmptyComponent={
+                  <Text style={[styles.emptySessionText, { color: theme.muted }]}>
+                    {persisted.conversations.length === 0 ? copy.sessionsEmpty : copy.sessionsNoMatches}
+                  </Text>
+                }
+              />
+
               <Pressable
                 style={[
-                  styles.drawerHeaderButton,
-                  sessionSelectionMode && styles.drawerHeaderButtonActive,
-                  persisted.conversations.length === 0 && styles.disabledAction,
+                  styles.drawerNewChatButton,
+                  {
+                    backgroundColor: isDark ? theme.primary : '#111827',
+                    shadowColor: isDark ? '#000000' : '#0F172A',
+                  },
                 ]}
-                onPress={toggleSessionSelectionMode}
-                disabled={persisted.conversations.length === 0}
+                onPress={createNewSession}
               >
-                <Text
-                  style={[
-                    styles.drawerHeaderButtonText,
-                    sessionSelectionMode && styles.drawerHeaderButtonTextActive,
-                  ]}
-                >
-                  {sessionSelectionMode ? copy.cancelSelection : copy.selectSessions}
-                </Text>
+                <PlusIcon light />
+                <Text style={styles.drawerNewChatText}>{copy.newSession}</Text>
               </Pressable>
-            </View>
-
-            <TextInput
-              value={sessionSearchQuery}
-              onChangeText={setSessionSearchQuery}
-              style={styles.drawerSearchInput}
-              placeholder={copy.sessionSearchPlaceholder}
-              placeholderTextColor="#9BA7B7"
-            />
-
-            <View style={styles.drawerNav}>
-              <Pressable
-                style={styles.drawerNavItem}
-                onPress={openSettingsFromSessions}
-                accessibilityRole="button"
-                accessibilityLabel={copy.settings}
-              >
-                <Text style={styles.drawerNavIcon}>...</Text>
-                <Text style={styles.drawerNavText}>{copy.settings}</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.drawerSectionHeader}>
-              <Text style={styles.drawerSectionLabel}>{copy.recordsSection}</Text>
-              {sessionSelectionMode && (
-                <Pressable
-                  style={[styles.drawerCopyButton, selectedSessionIds.length === 0 && styles.disabledAction]}
-                  onPress={() => {
-                    void copySelectedSessionExports();
-                  }}
-                  disabled={selectedSessionIds.length === 0}
-                >
-                  <Text style={styles.drawerCopyButtonText}>{copy.copySelectedSessions}</Text>
-                </Pressable>
-              )}
-            </View>
-            {sessionSelectionMode && (
-              <Text style={styles.drawerSelectionText}>{copy.selectedSessionsCount(selectedSessionIds.length)}</Text>
-            )}
-
-            <ScrollView
-              style={styles.drawerHistoryScroll}
-              contentContainerStyle={styles.drawerHistoryContent}
-              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
-            >
-              {persisted.conversations.length === 0 ? (
-                <Text style={styles.emptySessionText}>{copy.sessionsEmpty}</Text>
-              ) : visibleConversations.length === 0 ? (
-                <Text style={styles.emptySessionText}>{copy.sessionsNoMatches}</Text>
-              ) : (
-                visibleConversations.map((conversation) => {
-                  const active = conversation.id === activeConversation?.id;
-                  const selected = selectedSessionIds.includes(conversation.id);
-                  return (
-                    <Pressable
-                      key={conversation.id}
-                      style={[
-                        styles.drawerSessionItem,
-                        active && styles.drawerSessionItemActive,
-                        selected && styles.drawerSessionItemSelected,
-                      ]}
-                      onPress={() => openConversation(conversation.id)}
-                      onLongPress={() => {
-                        if (!sessionSelectionMode) {
-                          setSessionContextMenuId(conversation.id);
-                        }
-                      }}
-                      delayLongPress={320}
-                    >
-                      <View style={styles.drawerSessionMain}>
-                        {sessionSelectionMode && (
-                          <View style={[styles.sessionSelectMark, selected && styles.sessionSelectMarkActive]}>
-                            {selected && <Text style={styles.sessionSelectMarkText}>✓</Text>}
-                          </View>
-                        )}
-                        <View style={styles.sessionMeta}>
-                          <View style={styles.drawerSessionTitleRow}>
-                            {conversation.pinned && <Text style={styles.drawerSessionPin}>📌</Text>}
-                            <Text style={styles.drawerSessionTitle} numberOfLines={1}>
-                              {conversation.title}
-                            </Text>
-                          </View>
-                          <Text style={styles.drawerSessionSubtitle} numberOfLines={1}>
-                            {formatConversationListMeta(conversation, uiLanguage)}
-                          </Text>
-                        </View>
-                      </View>
-                    </Pressable>
-                  );
-                })
-              )}
-            </ScrollView>
-
-            <Pressable style={styles.drawerNewChatButton} onPress={createNewSession}>
-              <Text style={styles.drawerNewChatIcon}>+</Text>
-              <Text style={styles.drawerNewChatText}>{copy.newSession}</Text>
-            </Pressable>
-          </SafeAreaView>
-        </Animated.View>
-      </Modal>
+            </SafeAreaView>
+          </Animated.View>
+        </View>
+      )}
 
       <Modal visible={!!sessionContextConversation} animationType="fade" transparent onRequestClose={() => setSessionContextMenuId(null)}>
         <Pressable style={styles.contextMenuBackdrop} onPress={() => setSessionContextMenuId(null)}>
@@ -2928,7 +4709,9 @@ export default function App() {
                 }
               }}
             >
-              <Text style={styles.contextMenuIcon}>📌</Text>
+              <View style={styles.contextMenuIconWrap}>
+                <PinIcon light />
+              </View>
               <Text style={styles.contextMenuText}>
                 {sessionContextConversation?.pinned
                   ? uiLanguage === 'zh' ? '取消置顶' : 'Unpin'
@@ -2943,7 +4726,9 @@ export default function App() {
                 }
               }}
             >
-              <Text style={styles.contextMenuIcon}>✏️</Text>
+              <View style={styles.contextMenuIconWrap}>
+                <EditIcon />
+              </View>
               <Text style={styles.contextMenuText}>{copy.renameSession}</Text>
             </Pressable>
             <Pressable
@@ -2954,7 +4739,9 @@ export default function App() {
                 }
               }}
             >
-              <Text style={styles.contextMenuIcon}>🗑</Text>
+              <View style={styles.contextMenuIconWrap}>
+                <TrashIcon />
+              </View>
               <Text style={[styles.contextMenuText, styles.contextMenuDangerText]}>{copy.delete}</Text>
             </Pressable>
           </View>
@@ -2963,19 +4750,19 @@ export default function App() {
 
       <Modal visible={!!renamingConversation} animationType="fade" transparent>
         <View style={styles.modalBackdropCentered}>
-          <View style={styles.renameCard}>
-            <Text style={styles.modalTitle}>{copy.renameSessionTitle}</Text>
+          <View style={[styles.renameCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>{copy.renameSessionTitle}</Text>
             <TextInput
               value={draftSessionTitle}
               onChangeText={setDraftSessionTitle}
-              style={[styles.fieldInput, styles.renameInput]}
+              style={[styles.fieldInput, themedFieldInput, styles.renameInput]}
               placeholder={copy.renameSessionPlaceholder}
-              placeholderTextColor="#9BA7B7"
+              placeholderTextColor={theme.placeholder}
               autoFocus
             />
             <View style={styles.modalActions}>
-              <Pressable style={styles.modalGhost} onPress={closeRenameModal}>
-                <Text style={styles.modalGhostText}>{copy.cancel}</Text>
+              <Pressable style={[styles.modalGhost, { borderColor: theme.border }]} onPress={closeRenameModal}>
+                <Text style={[styles.modalGhostText, { color: theme.subtle }]}>{copy.cancel}</Text>
               </Pressable>
               <Pressable style={styles.modalPrimary} onPress={saveRenamedConversation}>
                 <Text style={styles.modalPrimaryText}>{copy.save}</Text>
@@ -2991,6 +4778,11 @@ export default function App() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+    overflow: 'hidden',
+  },
+  mainScene: {
+    flex: 1,
+    zIndex: 1,
   },
   safeArea: {
     flex: 1,
@@ -3019,8 +4811,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'android' ? 12 : 14,
-    paddingBottom: 4,
+    paddingBottom: 8,
     gap: 8,
   },
   sessionSwitcher: {
@@ -3030,35 +4821,21 @@ const styles = StyleSheet.create({
   },
   modelPill: {
     maxWidth: '100%',
-    minHeight: 34,
-    borderRadius: 17,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#D8E0EA',
     backgroundColor: '#FFFFFF',
     paddingLeft: 12,
-    paddingRight: 9,
+    paddingRight: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
   },
   title: {
     color: '#111827',
     fontSize: 19,
     fontWeight: '800',
     flexShrink: 1,
-  },
-  modelPillChevron: {
-    color: '#64748B',
-    fontSize: 13,
-    fontWeight: '900',
-    lineHeight: 15,
-  },
-  sessionLine: {
-    color: '#64748B',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 4,
-    paddingLeft: 2,
   },
   topActions: {
     flexDirection: 'row',
@@ -3104,26 +4881,17 @@ const styles = StyleSheet.create({
     color: '#DC2626',
   },
   iconAction: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#D8E0EA',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconActionText: {
-    color: '#1F2937',
-    fontSize: 20,
-    fontWeight: '800',
-    lineHeight: 22,
-  },
-  menuIconText: {
-    color: '#1F2937',
-    fontSize: 18,
-    fontWeight: '800',
-    lineHeight: 20,
+  iconRotateDown: {
+    transform: [{ rotate: '180deg' }],
   },
   chatShell: {
     flex: 1,
@@ -3176,35 +4944,145 @@ const styles = StyleSheet.create({
     color: '#334155',
     fontSize: 13,
   },
-  composerCard: {
+  composerDock: {
     marginHorizontal: 12,
     marginTop: 0,
-    marginBottom: Platform.OS === 'android' ? 2 : 8,
-    padding: 4,
-    borderRadius: 24,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D8E0EA',
   },
   composerRow: {
     minHeight: 46,
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  composerInputWrap: {
+    flex: 1,
+    minWidth: 0,
+    position: 'relative',
+    minHeight: 46,
+    borderRadius: 23,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+    padding: 3,
   },
   composerInput: {
-    flex: 1,
-    minHeight: 40,
-    maxHeight: 96,
+    width: '100%',
+    minHeight: 38,
+    maxHeight: 210,
     color: '#111827',
     fontSize: 15,
     lineHeight: 20,
-    paddingHorizontal: 8,
-    paddingTop: Platform.OS === 'android' ? 7 : 9,
-    paddingBottom: Platform.OS === 'android' ? 7 : 8,
+    paddingLeft: 9,
+    paddingRight: 41,
+    paddingTop: Platform.OS === 'android' ? 6 : 8,
+    paddingBottom: Platform.OS === 'android' ? 6 : 7,
     textAlignVertical: 'top',
   },
-  smallAction: {
+  composerInputWithActions: {
+    paddingRight: 41,
+  },
+  composerInputSingleLine: {
+    paddingTop: Platform.OS === 'android' ? 0 : 8,
+    paddingBottom: Platform.OS === 'android' ? 0 : 7,
+    includeFontPadding: false,
+  },
+  composerOverlayActions: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    bottom: 5,
+    zIndex: 2,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  composerOverlayButton: {
+    position: 'absolute',
+    right: 5,
+    bottom: 5,
+    zIndex: 2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+  },
+  composerExpandButton: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    zIndex: 3,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  composerOverlaySend: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  attachButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachButtonActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  attachOptionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+    width: '100%',
+  },
+  attachOption: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    gap: 6,
+  },
+  attachOptionText: {
+    color: '#111827',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  fullComposerScreen: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? 28 : 10,
+    paddingBottom: 14,
+  },
+  fullComposerHeader: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  fullComposerTitle: {
+    flex: 1,
+    color: '#111827',
+    fontSize: 19,
+    fontWeight: '900',
+  },
+  fullComposerClose: {
     width: 38,
     height: 38,
     borderRadius: 19,
@@ -3214,74 +5092,112 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  smallActionActive: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EFF6FF',
-  },
-  smallActionText: {
-    color: '#334155',
-    fontSize: 20,
-    fontWeight: '800',
-    lineHeight: 22,
-  },
-  attachMenuWrap: {
-    position: 'relative',
-  },
-  attachOptionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 3,
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  attachOption: {
+  fullComposerInput: {
     flex: 1,
-    minHeight: 48,
-    borderRadius: 16,
+    marginTop: 6,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#D8E0EA',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8FAFC',
+    color: '#111827',
+    fontSize: 16,
+    lineHeight: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  fullComposerActions: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingTop: 10,
+  },
+  fullComposerGhost: {
+    minHeight: 42,
+    borderRadius: 21,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+  },
+  fullComposerGhostText: {
+    color: '#334155',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  fullComposerSend: {
+    minHeight: 42,
+    borderRadius: 21,
+    paddingHorizontal: 17,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
-    gap: 6,
-  },
-  attachOptionIcon: {
-    color: '#2563EB',
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  attachOptionText: {
-    color: '#111827',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  sendAction: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    gap: 8,
     backgroundColor: '#2563EB',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  sendActionText: {
+  fullComposerSendText: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 14,
     fontWeight: '800',
-    lineHeight: 22,
   },
   disabledAction: {
     opacity: 0.6,
   },
-  modalBackdrop: {
+  modalSheetRoot: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
     justifyContent: 'flex-end',
   },
-  drawerBackdrop: {
+  modalBackdropLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+  },
+  drawerModalRoot: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 20,
+    backgroundColor: 'transparent',
+  },
+  drawerUnderlay: {
     flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  drawerUnderlayPressable: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  drawerMainDismissLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 21,
+  },
+  drawerBackdrop: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 22,
     backgroundColor: '#FFFFFF',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 6, height: 0 },
+    elevation: 12,
   },
   sessionDrawer: {
     flex: 1,
@@ -3329,11 +5245,11 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 16,
   },
-  contextMenuIcon: {
+  contextMenuIconWrap: {
     width: 28,
-    color: '#E5E7EB',
-    fontSize: 18,
-    textAlign: 'center',
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   contextMenuText: {
     flex: 1,
@@ -3374,11 +5290,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 18,
-    paddingTop: Platform.OS === 'android' ? 20 : 8,
   },
   settingsScreenScroll: {
     flex: 1,
     marginTop: 18,
+  },
+  settingsContentScene: {
+    flexGrow: 1,
   },
   modalTitle: {
     color: '#111827',
@@ -3401,12 +5319,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     marginTop: 2,
   },
-  backButtonText: {
-    color: '#1F2937',
-    fontSize: 24,
-    fontWeight: '700',
-    lineHeight: 26,
-  },
   modalHeading: {
     flex: 1,
     paddingRight: 12,
@@ -3418,6 +5330,16 @@ const styles = StyleSheet.create({
   },
   modalScroll: {
     marginTop: 18,
+  },
+  modalWarmup: {
+    minHeight: 320,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalWarmupText: {
+    color: '#64748B',
+    fontSize: 14,
+    fontWeight: '800',
   },
   sectionLabel: {
     color: '#2563EB',
@@ -3457,6 +5379,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
+  versionCheckButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+  },
   inlineUtilityButtonText: {
     color: '#2563EB',
     fontSize: 13,
@@ -3488,29 +5414,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 5,
   },
-  settingsNavArrow: {
-    color: '#94A3B8',
-    fontSize: 24,
-    fontWeight: '800',
-  },
   drawerHeader: {
-    minHeight: 64,
+    minHeight: 54,
     paddingHorizontal: 22,
     paddingTop: 10,
-    paddingBottom: 8,
+    paddingBottom: 2,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     gap: 16,
   },
-  drawerHeaderTitleBlock: {
-    flex: 1,
-    minWidth: 0,
+  drawerHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
-  drawerTitle: {
-    color: '#0F172A',
-    fontSize: 28,
-    fontWeight: '900',
+  drawerIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerIconButtonActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
   },
   drawerHeaderHint: {
     color: '#64748B',
@@ -3541,10 +5472,13 @@ const styles = StyleSheet.create({
   drawerHeaderButtonTextActive: {
     color: '#2563EB',
   },
-  drawerSearchInput: {
-    minHeight: 48,
+  drawerSearchWrap: {
+    position: 'relative',
     marginHorizontal: 22,
     marginTop: 10,
+  },
+  drawerSearchInput: {
+    minHeight: 48,
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -3554,42 +5488,42 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     fontSize: 15,
   },
-  drawerNav: {
-    paddingHorizontal: 14,
-    paddingTop: 18,
+  drawerSearchInputWithRaise: {
+    paddingRight: 46,
   },
-  drawerNavItem: {
-    minHeight: 54,
-    borderRadius: 14,
-    paddingHorizontal: 8,
-    flexDirection: 'row',
+  drawerSearchInputRaised: {
+    minHeight: 102,
+    maxHeight: 146,
+  },
+  drawerSearchRaiseButton: {
+    position: 'absolute',
+    top: 9,
+    right: 9,
+    zIndex: 2,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
-    gap: 14,
-  },
-  drawerNavIcon: {
-    width: 34,
-    color: '#111827',
-    fontSize: 24,
-    fontWeight: '900',
-    textAlign: 'center',
-    lineHeight: 28,
-  },
-  drawerNavText: {
-    color: '#111827',
-    fontSize: 18,
-    fontWeight: '800',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D8E0EA',
   },
   drawerSectionHeader: {
-    marginTop: 22,
+    marginTop: 18,
     marginBottom: 8,
     paddingHorizontal: 22,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
+    flexWrap: 'wrap',
+  },
+  drawerSectionTitleWrap: {
+    flex: 1,
+    minWidth: 132,
   },
   drawerSectionLabel: {
-    flex: 1,
     color: '#111827',
     fontSize: 17,
     fontWeight: '800',
@@ -3607,6 +5541,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
+  drawerDeleteButton: {
+    minHeight: 34,
+    borderRadius: 17,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerDeleteButtonText: {
+    color: '#B91C1C',
+    fontSize: 13,
+    fontWeight: '800',
+  },
   drawerSelectionText: {
     color: '#64748B',
     fontSize: 12,
@@ -3618,28 +5567,28 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   drawerHistoryContent: {
-    paddingHorizontal: 14,
+    flexGrow: 1,
+    paddingHorizontal: 22,
     paddingTop: 2,
     paddingBottom: 108,
   },
+  drawerHistoryFooterSwipeArea: {
+    width: '100%',
+  },
   drawerSessionItem: {
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    minHeight: 76,
-    marginBottom: 10,
-    borderRadius: 16,
+    paddingHorizontal: 0,
+    paddingVertical: 10,
+    minHeight: 48,
+    marginBottom: 0,
+    borderRadius: 0,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    borderColor: 'transparent',
+    borderBottomColor: '#E6ECF2',
+    backgroundColor: 'transparent',
   },
   drawerSessionItemActive: {
-    borderColor: '#93C5FD',
-    backgroundColor: '#EFF6FF',
+    borderBottomColor: '#BFDBFE',
+    backgroundColor: 'transparent',
   },
   drawerSessionItemSelected: {
     backgroundColor: '#EFF6FF',
@@ -3648,30 +5597,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    minHeight: 44,
+    minHeight: 28,
   },
   drawerSessionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     minWidth: 0,
-    gap: 6,
-  },
-  drawerSessionPin: {
-    color: '#2563EB',
-    fontSize: 13,
-    lineHeight: 16,
+    gap: 8,
   },
   drawerSessionTitle: {
     flex: 1,
     color: '#111827',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
   },
-  drawerSessionSubtitle: {
+  drawerSessionTime: {
     color: '#6B7280',
     fontSize: 12,
-    fontWeight: '600',
-    marginTop: 7,
+    fontWeight: '700',
+    flexShrink: 0,
   },
   drawerSessionActions: {
     flexDirection: 'row',
@@ -3694,16 +5638,10 @@ const styles = StyleSheet.create({
     borderColor: '#2563EB',
     backgroundColor: '#2563EB',
   },
-  sessionSelectMarkText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '900',
-    lineHeight: 16,
-  },
   drawerNewChatButton: {
     position: 'absolute',
     right: 24,
-    bottom: Platform.OS === 'android' ? 26 : 34,
+    bottom: Platform.OS === 'android' ? 24 : 28,
     minHeight: 58,
     borderRadius: 29,
     backgroundColor: '#111827',
@@ -3716,12 +5654,6 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
     elevation: 8,
-  },
-  drawerNewChatIcon: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: '700',
-    lineHeight: 28,
   },
   drawerNewChatText: {
     color: '#FFFFFF',
@@ -4253,6 +6185,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#2563EB',
     paddingHorizontal: 16,
     paddingVertical: 10,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modelFetchButton: {
+    minHeight: 46,
   },
   modalPrimaryText: {
     color: '#FFFFFF',
