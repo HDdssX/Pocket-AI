@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import {
   Alert,
   Animated,
   Appearance,
+  BackHandler,
   Easing,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
-  NativeEventEmitter,
-  NativeModules,
   PanResponder,
   Linking,
   Platform,
@@ -25,42 +23,54 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
 import type {
   AlertButton,
-  ColorSchemeName,
   GestureResponderEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
   PanResponderGestureState,
-  StyleProp,
-  ViewStyle,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
   Camera,
-  Edit3,
   FileText,
   Image as ImageIcon,
   Maximize2,
-  Menu,
-  MoreHorizontal,
-  Pin,
-  Plus,
-  Search,
-  Send,
-  Settings,
-  Square,
-  Trash2,
   X,
 } from 'lucide-react-native';
 
+import {
+  CheckIcon,
+  DirectionIcon,
+  EditIcon,
+  GitHubIcon,
+  MenuIcon,
+  MoreIcon,
+  PinIcon,
+  PlusIcon,
+  SearchIcon,
+  SendIcon,
+  SettingsIcon,
+  StopIcon,
+  TrashIcon,
+} from './src/components/AppIcons';
 import { MessageBubble } from './src/components/MessageBubble';
+import { SlideFadePresence } from './src/components/SlideFadePresence';
+import { COPY } from './src/i18n/copy';
+import {
+  conversationMatchesQuery,
+  createConversation,
+  formatConversationMarkdown,
+  formatRelativeTime,
+  getAllConversationAttachments,
+  getConversationAttachments,
+  normalizeMessageVariants,
+  normalizeSearchText,
+  sortConversationsForList,
+  trimTitle,
+  upsertConversation,
+} from './src/lib/conversations';
 import {
   captureImageAttachment,
   clearAllAttachmentFiles,
@@ -77,15 +87,12 @@ import {
   API_PROTOCOL_OPTIONS,
   apiProtocolLabel,
   classifyModel,
-  DEFAULT_LANGUAGE,
   DEFAULT_PROFILE,
   getEndpointHint,
   getModelHint,
   getProtocolStorageHint,
   getReasoningEffortHint,
-  modelSupportsReasoning,
   MODEL_SUGGESTIONS,
-  REASONING_EFFORT_OPTIONS,
 } from './src/lib/models';
 import {
   createAssistantTurn,
@@ -106,11 +113,39 @@ import {
   saveProfileApiKey,
   savePersistedState,
 } from './src/lib/storage';
+import {
+  APP_VERSION,
+  fetchLatestRelease,
+  isNewerRelease,
+} from './src/lib/releases';
+import {
+  applyApiPreset,
+  getActiveProfile,
+  getCachedModelsForProfile,
+  getCachedReasoningEffortsForProfile,
+  inferReasoningEffortOptions,
+  profileHasAdvancedValues,
+  sanitizeProfile,
+  uniqueStrings,
+  upsertProfile,
+} from './src/lib/profiles';
+import {
+  hasKeyboardInsetsBridge,
+  startKeyboardInsetsTracking,
+  subscribeKeyboardInsets,
+} from './src/native/keyboardInsets';
+import {
+  clearSharedImages,
+  getInitialSharedImages,
+  getSharedImageUri,
+  hasSharedImageBridge,
+  subscribeSharedImages,
+} from './src/native/sharedImages';
+import { normalizeSystemColorScheme, resolveTheme } from './src/theme';
 import type {
   ApiProfile,
   AttachmentRecord,
   ChatMessage,
-  ChatMessageVariant,
   ConversationRecord,
   PendingAttachment,
   PersistedState,
@@ -118,518 +153,40 @@ import type {
   ThemeMode,
   UiLanguage,
 } from './src/types';
-import { getContentPlugins } from './src/plugins';
-
-type LanguageCopy = {
-  eyebrow: string;
-  title: string;
-  settings: string;
-  settingsTitle: string;
-  settingsSubtitle: string;
-  back: string;
-  generalSection: string;
-  apiSection: string;
-  recordsSection: string;
-  storageSection: string;
-  apiProfilesTitle: string;
-  apiProfilesSubtitle: string;
-  manageApiProfiles: string;
-  newApiProfile: string;
-  activeApiProfile: string;
-  selectedApiProfile: string;
-  deleteApiProfile: string;
-  deleteApiProfileTitle: string;
-  deleteApiProfileMessage: string;
-  cannotDeleteOnlyApiProfile: string;
-  testApiConnection: string;
-  testingApiConnection: string;
-  testConnectionSuccessTitle: string;
-  testConnectionSuccessMessage: (latencyMs: number, endpoint: string, sampleText: string) => string;
-  testConnectionFailedTitle: string;
-  privacySection: string;
-  localStorageTitle: string;
-  localStorageDescription: string;
-  pluginsSection: string;
-  pluginsTitle: string;
-  pluginsDescription: string;
-  aboutSection: string;
-  createdBy: string;
-  themeSection: string;
-  themeLight: string;
-  themeDark: string;
-  themeSystem: string;
-  versionLabel: string;
-  checkLatestVersion: string;
-  checkingLatestVersion: string;
-  latestVersionTitle: string;
-  latestVersionCurrent: string;
-  latestVersionAvailable: (version: string) => string;
-  latestVersionFailedTitle: string;
-  latestVersionFailedMessage: string;
-  github: string;
-  blog: string;
-  email: string;
-  language: string;
-  chinese: string;
-  english: string;
-  openSessions: string;
-  newSession: string;
-  currentSession: string;
-  noSession: string;
-  localEncrypted: string;
-  directApi: string;
-  modelHintLabel: string;
-  activeModel: string;
-  switchModel: string;
-  modelPickerTitle: string;
-  fetchModels: string;
-  fetchingModels: string;
-  modelsEmpty: string;
-  modelsFetchFailed: string;
-  basicApiSettings: string;
-  advancedApiSettings: string;
-  showAdvancedSettings: string;
-  hideAdvancedSettings: string;
-  currentValue: string;
-  profileLabel: string;
-  apiPreset: string;
-  endpointMode: string;
-  baseUrl: string;
-  baseUrlHint: string;
-  advancedConfigHint: string;
-  insecureHttpWarning: string;
-  apiKey: string;
-  model: string;
-  reasoningEffort: string;
-  fetchReasoningEfforts: string;
-  reasoningEffortsReady: string;
-  reasoningEffortsUnavailable: string;
-  reasoningEffortCustomPlaceholder: string;
-  reasoningEffortInvalid: string;
-  responseStorage: string;
-  storageEnabled: string;
-  storageDisabled: string;
-  projectId: string;
-  organization: string;
-  systemPrompt: string;
-  clearLocalData: string;
-  clearLocalHint: string;
-  close: string;
-  save: string;
-  saving: string;
-  sessionsTitle: string;
-  sessionsEmpty: string;
-  sessionSearchPlaceholder: string;
-  sessionsNoMatches: string;
-  renameSession: string;
-  renameSessionTitle: string;
-  renameSessionPlaceholder: string;
-  exportSession: string;
-  copiedSessionExport: string;
-  selectSessions: string;
-  cancelSelection: string;
-  copySelectedSessions: string;
-  deleteSelectedSessions: string;
-  selectedSessionsCount: (count: number) => string;
-  selectedSessionsDeleteMessage: (count: number) => string;
-  expandComposer: string;
-  done: string;
-  delete: string;
-  deleteSessionTitle: string;
-  deleteSessionMessage: string;
-  clearDataTitle: string;
-  clearDataMessage: string;
-  cancel: string;
-  clear: string;
-  composerPlaceholder: string;
-  attachMenu: string;
-  camera: string;
-  image: string;
-  file: string;
-  send: string;
-  sending: string;
-  queuedAttachments: string;
-  emptyStateTitle: string;
-  emptyStateBody: string;
-  noActiveSessionTitle: string;
-  noActiveSessionBody: string;
-  imagePickerFailed: string;
-  imagePickerFailedFallback: string;
-  filePickerFailed: string;
-  filePickerFailedFallback: string;
-  apiKeyRequiredTitle: string;
-  apiKeyRequiredMessage: string;
-  sendFailed: string;
-  stopGenerating: string;
-  generationStopped: string;
-  apiErrorNetwork: string;
-  apiErrorUnauthorized: string;
-  apiErrorForbidden: string;
-  apiErrorNotFound: string;
-  apiErrorRateLimited: string;
-  apiErrorBadRequest: string;
-  apiErrorServer: string;
-  apiErrorTimeout: string;
-  apiErrorRawPrefix: string;
-  clearFailed: string;
-  clearFailedFallback: string;
-  loading: string;
-  sessionCount: (count: number) => string;
-  sessionMeta: (model: string, count: number) => string;
-};
-
-type SharedImageNativeModule = {
-  getInitialImages?: () => Promise<SharedImageInput[]>;
-  clear?: () => void;
-};
-
-function getSharedImageUri(input: SharedImageInput): string {
-  return typeof input === 'string' ? input : input.uri;
-}
-
-const COPY: Record<UiLanguage, LanguageCopy> = {
-  zh: {
-    eyebrow: '本地优先 AI 聊天',
-    title: 'Pocket AI',
-    settings: '设置',
-    settingsTitle: '设置',
-    settingsSubtitle: '管理语言、会话和 API 配置。密钥只保存在本机。',
-    back: '返回',
-    generalSection: '通用',
-    apiSection: 'API 配置',
-    recordsSection: '聊天记录',
-    storageSection: '聊天记录存储',
-    apiProfilesTitle: 'API 配置',
-    apiProfilesSubtitle: '可以保存多个 API 配置，点完成会自动保存并作为当前聊天使用。',
-    manageApiProfiles: '管理 API 配置',
-    newApiProfile: '新增配置',
-    activeApiProfile: '当前使用',
-    selectedApiProfile: '正在编辑',
-    deleteApiProfile: '删除配置',
-    deleteApiProfileTitle: '删除 API 配置？',
-    deleteApiProfileMessage: '这会删除该配置和它保存的 API key，不会删除聊天记录。',
-    cannotDeleteOnlyApiProfile: '至少需要保留一个 API 配置。',
-    testApiConnection: '测试连接',
-    testingApiConnection: '测试中...',
-    testConnectionSuccessTitle: '连接可用',
-    testConnectionSuccessMessage: (latencyMs, endpoint, sampleText) =>
-      `接口已响应，用时 ${latencyMs}ms。\n\n${endpoint}${sampleText ? `\n\n返回示例：${sampleText}` : ''}`,
-    testConnectionFailedTitle: '连接测试失败',
-    privacySection: '隐私与本地数据',
-    localStorageTitle: '聊天记录保存位置',
-    localStorageDescription:
-      '聊天记录、会话列表和 API 配置会加密后保存在本机应用私有存储（AsyncStorage: ai-chat-pocket.state.v1）。加密密钥和 API key 保存在系统 SecureStore/Keystore；导入的附件会复制到应用私有文件目录。卸载应用或清空本地数据会删除这些内容。',
-    pluginsSection: '插件',
-    pluginsTitle: '内置内容插件',
-    pluginsDescription: '插件会在消息显示前做轻量处理，例如用 KaTeX 保留 LaTeX/密码学公式的字体和版式。',
-    aboutSection: '关于',
-    createdBy: '共创维护',
-    themeSection: '外观',
-    themeLight: '浅色',
-    themeDark: '深色',
-    themeSystem: '跟随系统',
-    versionLabel: '当前版本',
-    checkLatestVersion: '检查最新版本',
-    checkingLatestVersion: '检查中...',
-    latestVersionTitle: '版本检查',
-    latestVersionCurrent: '已是最新版本。',
-    latestVersionAvailable: (version) => `发现新版本：${version}`,
-    latestVersionFailedTitle: '检查失败',
-    latestVersionFailedMessage: '无法从 GitHub 获取最新版本信息。',
-    github: 'GitHub',
-    blog: '博客',
-    email: '邮箱',
-    language: '界面语言',
-    chinese: '中文',
-    english: 'English',
-    openSessions: '管理会话',
-    newSession: '新建会话',
-    currentSession: '当前会话',
-    noSession: '暂无会话',
-    localEncrypted: '本地加密',
-    directApi: '直连 API',
-    modelHintLabel: '模型说明',
-    activeModel: '当前模型',
-    switchModel: '切换模型',
-    modelPickerTitle: '选择模型',
-    fetchModels: '重新获取模型',
-    fetchingModels: '获取中...',
-    modelsEmpty: '暂无可选模型，请先获取或手动输入。',
-    modelsFetchFailed: '获取模型失败',
-    basicApiSettings: '常用配置',
-    advancedApiSettings: '高级配置',
-    showAdvancedSettings: '展开高级配置',
-    hideAdvancedSettings: '收起高级配置',
-    currentValue: '当前',
-    profileLabel: '配置名称',
-    apiPreset: '服务商预设',
-    endpointMode: '接口类型',
-    baseUrl: 'Base URL',
-    baseUrlHint: '这里只填 API 根地址，接口类型会决定自动拼接 `/responses` 或 `/chat/completions`。',
-    advancedConfigHint:
-      'Project ID 和 Organization 是 OpenAI 账号/项目路由字段，DeepSeek 一般留空。系统提示词会作为长期规则随上下文发送，例如：“你是我的中文学习助手，回答先给结论，再给例子。”',
-    insecureHttpWarning: '当前使用的是 HTTP。API key、消息和附件不会经过 TLS 加密，建议网关支持后切换到 HTTPS。',
-    apiKey: 'API Key',
-    model: '模型',
-    reasoningEffort: '推理强度',
-    fetchReasoningEfforts: '获取推理强度',
-    reasoningEffortsReady: '已根据当前接口和模型更新可选推理强度。',
-    reasoningEffortsUnavailable: '当前模型未识别到推理强度参数，建议保持关闭。',
-    reasoningEffortCustomPlaceholder: '输入其他值，如 medium/high',
-    reasoningEffortInvalid: '无效推理强度，未应用。',
-    responseStorage: '服务端响应存储',
-    storageEnabled: '开启',
-    storageDisabled: '关闭',
-    projectId: 'Project ID',
-    organization: 'Organization',
-    systemPrompt: '系统提示词',
-    clearLocalData: '清空本地数据',
-    clearLocalHint: '会删除本机保存的 API key、加密后的会话记录、复制的附件以及本地状态。',
-    close: '关闭',
-    save: '保存',
-    saving: '保存中...',
-    sessionsTitle: '会话',
-    sessionsEmpty: '还没有保存的会话。',
-    sessionSearchPlaceholder: '搜索会话或消息...',
-    sessionsNoMatches: '没有匹配的会话。',
-    renameSession: '重命名',
-    renameSessionTitle: '重命名会话',
-    renameSessionPlaceholder: '输入新的会话名称',
-    exportSession: '复制导出',
-    copiedSessionExport: '已复制为 Markdown。',
-    selectSessions: '选择',
-    cancelSelection: '取消选择',
-    copySelectedSessions: '复制所选',
-    deleteSelectedSessions: '删除所选',
-    selectedSessionsCount: (count) => `已选 ${count} 个`,
-    selectedSessionsDeleteMessage: (count) => `确定删除选中的 ${count} 个会话？`,
-    expandComposer: '大屏编辑',
-    done: '完成',
-    delete: '删除',
-    deleteSessionTitle: '删除会话？',
-    deleteSessionMessage: '这会删除该会话的本地消息记录，以及为它复制到应用目录里的附件。',
-    clearDataTitle: '清空全部本地数据？',
-    clearDataMessage: '这会删除保存的 API key、本地聊天记录、复制的附件和加密状态。',
-    cancel: '取消',
-    clear: '清空',
-    composerPlaceholder: '问点什么...',
-    attachMenu: '添加附件',
-    camera: '拍照',
-    image: '图片',
-    file: '文件',
-    send: '发送',
-    sending: '发送中...',
-    queuedAttachments: '待发送附件',
-    emptyStateTitle: '开始对话',
-    emptyStateBody: '支持文本、图片和文件输入。会话历史保存在本机，可随时管理 API 配置和本地会话。',
-    noActiveSessionTitle: '还没有激活会话',
-    noActiveSessionBody: '先新建一个会话，保存 API key，然后就可以开始聊天。',
-    imagePickerFailed: '选择图片失败',
-    imagePickerFailedFallback: '无法读取所选图片。',
-    filePickerFailed: '选择文件失败',
-    filePickerFailedFallback: '无法读取所选文件。',
-    apiKeyRequiredTitle: '需要 API key',
-    apiKeyRequiredMessage: '请先在设置里保存 API key。',
-    sendFailed: '发送失败',
-    stopGenerating: '停止生成',
-    generationStopped: '已停止生成。',
-    apiErrorNetwork: '网络请求失败。请检查手机网络、Base URL、代理或网关证书。',
-    apiErrorUnauthorized: '鉴权失败。请检查 API key 是否正确，是否属于当前服务商或项目。',
-    apiErrorForbidden: '当前账号或项目没有权限访问这个模型/接口。',
-    apiErrorNotFound: '接口或模型不存在。请检查 Base URL、接口类型和模型名称。',
-    apiErrorRateLimited: '请求过于频繁或额度不足。请稍后重试，或检查账号额度。',
-    apiErrorBadRequest: '请求参数不兼容。请检查接口类型、模型名称、附件类型和推理强度。',
-    apiErrorServer: '服务端暂时不可用。请稍后重试，或切换到其他配置。',
-    apiErrorTimeout: '请求超时。请检查网络，或换用更快的模型/网关。',
-    apiErrorRawPrefix: '原始错误',
-    clearFailed: '清空失败',
-    clearFailedFallback: '无法清空本地数据。',
-    loading: '正在载入本地聊天数据...',
-    sessionCount: (count) => `${count} 个会话`,
-    sessionMeta: (model, count) => `${model} | ${count} 条消息`,
-  },
-  en: {
-    eyebrow: 'LOCAL-FIRST AI CHAT',
-    title: 'Pocket AI',
-    settings: 'Settings',
-    settingsTitle: 'Settings',
-    settingsSubtitle: 'Manage language, sessions, and API configuration. Your key stays on this device.',
-    back: 'Back',
-    generalSection: 'General',
-    apiSection: 'API Configuration',
-    recordsSection: 'Chat History',
-    storageSection: 'Chat Storage',
-    apiProfilesTitle: 'API Profiles',
-    apiProfilesSubtitle: 'Save multiple API profiles. Done saves and applies the edited profile automatically.',
-    manageApiProfiles: 'Manage API profiles',
-    newApiProfile: 'New profile',
-    activeApiProfile: 'Current',
-    selectedApiProfile: 'Editing',
-    deleteApiProfile: 'Delete profile',
-    deleteApiProfileTitle: 'Delete API profile?',
-    deleteApiProfileMessage: 'This deletes the profile and its saved API key, but keeps chat history.',
-    cannotDeleteOnlyApiProfile: 'Keep at least one API profile.',
-    testApiConnection: 'Test connection',
-    testingApiConnection: 'Testing...',
-    testConnectionSuccessTitle: 'Connection works',
-    testConnectionSuccessMessage: (latencyMs, endpoint, sampleText) =>
-      `Endpoint responded in ${latencyMs}ms.\n\n${endpoint}${sampleText ? `\n\nSample: ${sampleText}` : ''}`,
-    testConnectionFailedTitle: 'Connection test failed',
-    privacySection: 'Privacy & Local Data',
-    localStorageTitle: 'Where chats are stored',
-    localStorageDescription:
-      'Chats, sessions, and API profiles are encrypted into this app private storage (AsyncStorage: ai-chat-pocket.state.v1). The encryption key and API keys are stored in system SecureStore/Keystore; imported attachments are copied into the app private file directory. Uninstalling the app or clearing local data removes them.',
-    pluginsSection: 'Plugins',
-    pluginsTitle: 'Built-in content plugins',
-    pluginsDescription: 'Plugins lightly transform messages before display, such as preserving LaTeX and cryptography formula typography with KaTeX.',
-    aboutSection: 'About',
-    createdBy: 'Co-maintainers',
-    themeSection: 'Appearance',
-    themeLight: 'Light',
-    themeDark: 'Dark',
-    themeSystem: 'System',
-    versionLabel: 'Current version',
-    checkLatestVersion: 'Check latest version',
-    checkingLatestVersion: 'Checking...',
-    latestVersionTitle: 'Version check',
-    latestVersionCurrent: 'You are on the latest version.',
-    latestVersionAvailable: (version) => `New version available: ${version}`,
-    latestVersionFailedTitle: 'Check failed',
-    latestVersionFailedMessage: 'Unable to fetch the latest version from GitHub.',
-    github: 'GitHub',
-    blog: 'Blog',
-    email: 'Email',
-    language: 'Interface language',
-    chinese: 'Chinese',
-    english: 'English',
-    openSessions: 'Manage sessions',
-    newSession: 'New session',
-    currentSession: 'Current session',
-    noSession: 'No active session',
-    localEncrypted: 'Local encrypted',
-    directApi: 'Direct API',
-    modelHintLabel: 'Model notes',
-    activeModel: 'Active model',
-    switchModel: 'Switch model',
-    modelPickerTitle: 'Choose model',
-    fetchModels: 'Refetch models',
-    fetchingModels: 'Fetching...',
-    modelsEmpty: 'No models yet. Fetch models or type one manually.',
-    modelsFetchFailed: 'Unable to fetch models',
-    basicApiSettings: 'Basic settings',
-    advancedApiSettings: 'Advanced settings',
-    showAdvancedSettings: 'Show advanced settings',
-    hideAdvancedSettings: 'Hide advanced settings',
-    currentValue: 'Current',
-    profileLabel: 'Profile label',
-    apiPreset: 'Provider preset',
-    endpointMode: 'Endpoint mode',
-    baseUrl: 'Base URL',
-    baseUrlHint: 'Enter only the API root. The endpoint mode decides whether `/responses` or `/chat/completions` is appended.',
-    advancedConfigHint:
-      'Project ID and Organization are OpenAI account/project routing fields; leave them empty for DeepSeek. The system prompt is sent as a long-lived rule, for example: "You are my Chinese learning assistant. Answer with a short conclusion, then examples."',
-    insecureHttpWarning: 'You are using HTTP. Your API key, messages, and attachments are not protected by TLS. Switch to HTTPS when your gateway supports it.',
-    apiKey: 'API key',
-    model: 'Model',
-    reasoningEffort: 'Reasoning effort',
-    fetchReasoningEfforts: 'Fetch efforts',
-    reasoningEffortsReady: 'Reasoning effort choices were updated for this endpoint and model.',
-    reasoningEffortsUnavailable: 'No reasoning effort parameter was detected for this model. Keep it off.',
-    reasoningEffortCustomPlaceholder: 'Enter another value, e.g. medium/high',
-    reasoningEffortInvalid: 'Invalid reasoning effort. Not applied.',
-    responseStorage: 'Server response storage',
-    storageEnabled: 'Enabled',
-    storageDisabled: 'Disabled',
-    projectId: 'Project ID',
-    organization: 'Organization',
-    systemPrompt: 'System prompt',
-    clearLocalData: 'Clear all local data',
-    clearLocalHint: 'This removes the saved API key, encrypted chat history, copied attachments, and local app state.',
-    close: 'Close',
-    save: 'Save',
-    saving: 'Saving...',
-    sessionsTitle: 'Sessions',
-    sessionsEmpty: 'No saved sessions yet.',
-    sessionSearchPlaceholder: 'Search sessions or messages...',
-    sessionsNoMatches: 'No matching sessions.',
-    renameSession: 'Rename',
-    renameSessionTitle: 'Rename session',
-    renameSessionPlaceholder: 'Enter a new session name',
-    exportSession: 'Copy export',
-    copiedSessionExport: 'Copied as Markdown.',
-    selectSessions: 'Select',
-    cancelSelection: 'Cancel selection',
-    copySelectedSessions: 'Copy selected',
-    deleteSelectedSessions: 'Delete selected',
-    selectedSessionsCount: (count) => `${count} selected`,
-    selectedSessionsDeleteMessage: (count) => `Delete ${count} selected sessions?`,
-    expandComposer: 'Expand editor',
-    done: 'Done',
-    delete: 'Delete',
-    deleteSessionTitle: 'Delete session?',
-    deleteSessionMessage: 'This removes the local messages and copied attachments for this session.',
-    clearDataTitle: 'Clear all local data?',
-    clearDataMessage: 'This deletes the saved API key, local chat history, copied attachments, and encrypted state on this device.',
-    cancel: 'Cancel',
-    clear: 'Clear',
-    composerPlaceholder: 'Ask anything...',
-    attachMenu: 'Add attachment',
-    camera: 'Camera',
-    image: 'Image',
-    file: 'File',
-    send: 'Send',
-    sending: 'Sending...',
-    queuedAttachments: 'Queued attachments',
-    emptyStateTitle: 'Start chatting',
-    emptyStateBody: 'Use text, images, or files. Chat history stays on-device, with local session and API profile management.',
-    noActiveSessionTitle: 'No active session',
-    noActiveSessionBody: 'Create a session, save an API key, and start chatting.',
-    imagePickerFailed: 'Image picker failed',
-    imagePickerFailedFallback: 'Unable to read the selected image.',
-    filePickerFailed: 'File picker failed',
-    filePickerFailedFallback: 'Unable to read the selected file.',
-    apiKeyRequiredTitle: 'API key required',
-    apiKeyRequiredMessage: 'Save your API key in settings first.',
-    sendFailed: 'Send failed',
-    stopGenerating: 'Stop generating',
-    generationStopped: 'Generation stopped.',
-    apiErrorNetwork: 'Network request failed. Check phone connectivity, Base URL, proxy, or gateway certificate.',
-    apiErrorUnauthorized: 'Authentication failed. Check that the API key matches this provider and project.',
-    apiErrorForbidden: 'This account or project cannot access the selected model or endpoint.',
-    apiErrorNotFound: 'Endpoint or model not found. Check Base URL, endpoint mode, and model name.',
-    apiErrorRateLimited: 'Too many requests or insufficient quota. Try later or check account quota.',
-    apiErrorBadRequest: 'Request parameters are incompatible. Check endpoint mode, model name, attachments, and reasoning effort.',
-    apiErrorServer: 'The provider is temporarily unavailable. Try later or switch profiles.',
-    apiErrorTimeout: 'Request timed out. Check the network, or use a faster model/gateway.',
-    apiErrorRawPrefix: 'Raw error',
-    clearFailed: 'Clear failed',
-    clearFailedFallback: 'Unable to clear local data.',
-    loading: 'Loading local chat vault...',
-    sessionCount: (count) => `${count} sessions`,
-    sessionMeta: (model, count) => `${model} | ${count} messages`,
-  },
-};
 
 const STREAMING_FLUSH_INTERVAL_MS = 220;
 const STREAMING_SCROLL_INTERVAL_MS = 260;
 const CHAT_BOTTOM_FOLLOW_THRESHOLD = 96;
-const APP_VERSION = '1.1.0';
-const LATEST_RELEASE_URL = 'https://api.github.com/repos/HDdssX/Pocket-AI/releases/latest';
 const DRAWER_SWIPE_SLOPE = 0.35;
 const DRAWER_SWIPE_MIN_DISTANCE = 5;
 const SESSION_CLOSE_SWIPE_SLOPE = 0.08;
 const SESSION_CLOSE_SWIPE_MIN_DISTANCE = 1;
 const COMPOSER_VISIBLE_BOTTOM_GAP = 8;
+const MOTION_SETTLE_EASING = Easing.bezier(0.2, 0, 0, 1);
+const MOTION_EXIT_EASING = Easing.bezier(0.4, 0, 1, 1);
+const DRAWER_SETTLE_MIN_DURATION_MS = 170;
+const DRAWER_SETTLE_MAX_DURATION_MS = 320;
+const SHEET_OPEN_DURATION_MS = 260;
+const SHEET_CLOSE_DURATION_MS = 220;
 
-type SettingsSection = 'root' | 'api' | 'language' | 'theme' | 'records' | 'storage' | 'plugins' | 'about';
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
 
-type SlideFadePresenceProps = {
-  children: ReactNode;
-  distance?: number;
-  from?: 'top' | 'bottom';
-  style?: StyleProp<ViewStyle>;
-  visible: boolean;
-};
+function getDistanceDuration(
+  distance: number,
+  fullDistance: number,
+  minDuration: number,
+  maxDuration: number,
+  velocity = 0
+) {
+  const distanceRatio = clampNumber(distance / Math.max(1, fullDistance), 0, 1);
+  const baseDuration = minDuration + (maxDuration - minDuration) * Math.sqrt(distanceRatio);
+  const velocityFactor = clampNumber(1 - Math.abs(velocity) * 0.18, 0.72, 1);
+  return Math.round(baseDuration * velocityFactor);
+}
+
+type SettingsSection = 'root' | 'api' | 'language' | 'theme' | 'storage' | 'about';
 
 function isLooseDirectionalSwipe(
   gestureState: PanResponderGestureState,
@@ -671,473 +228,6 @@ function isSensitiveSessionCloseSwipe(gestureState: PanResponderGestureState): b
   return absX > absY * SESSION_CLOSE_SWIPE_SLOPE || signedDx > 4 || Math.abs(gestureState.vx) > 0.03;
 }
 
-function isSensitiveSessionCloseDelta(dx: number, dy: number): boolean {
-  const signedDx = -dx;
-  if (signedDx < SESSION_CLOSE_SWIPE_MIN_DISTANCE) {
-    return false;
-  }
-
-  return Math.abs(dx) > Math.abs(dy) * SESSION_CLOSE_SWIPE_SLOPE || signedDx > 4;
-}
-
-function SlideFadePresence({
-  children,
-  distance = 14,
-  from = 'bottom',
-  style,
-  visible,
-}: SlideFadePresenceProps) {
-  const [mounted, setMounted] = useState(visible);
-  const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
-
-  useEffect(() => {
-    let active = true;
-    if (visible) {
-      setMounted(true);
-    }
-
-    const start = () => {
-      progress.stopAnimation();
-      Animated.timing(progress, {
-        toValue: visible ? 1 : 0,
-        duration: visible ? 180 : 130,
-        easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (active && finished && !visible) {
-          setMounted(false);
-        }
-      });
-    };
-
-    if (visible) {
-      requestAnimationFrame(start);
-    } else {
-      start();
-    }
-
-    return () => {
-      active = false;
-      progress.stopAnimation();
-    };
-  }, [progress, visible]);
-
-  if (!mounted) {
-    return null;
-  }
-
-  const translateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [from === 'top' ? -distance : distance, 0],
-  });
-
-  return (
-    <Animated.View
-      pointerEvents={visible ? 'auto' : 'none'}
-      style={[style, { opacity: progress, transform: [{ translateY }] }]}
-    >
-      {children}
-    </Animated.View>
-  );
-}
-
-type AppTheme = {
-  scheme: 'light' | 'dark';
-  gradient: readonly [string, string, string];
-  statusBar: 'dark-content' | 'light-content';
-  text: string;
-  muted: string;
-  subtle: string;
-  surface: string;
-  surfaceAlt: string;
-  border: string;
-  strong: string;
-  primary: string;
-  primarySoft: string;
-  dangerSoft: string;
-  divider: string;
-  input: string;
-  placeholder: string;
-  userBubble: string;
-  userBorder: string;
-};
-
-const LIGHT_THEME: AppTheme = {
-  scheme: 'light',
-  gradient: ['#FFFFFF', '#F6F8FB', '#EEF3F8'],
-  statusBar: 'dark-content',
-  text: '#111827',
-  muted: '#64748B',
-  subtle: '#334155',
-  surface: '#FFFFFF',
-  surfaceAlt: '#F8FAFC',
-  border: '#D8E0EA',
-  strong: '#111827',
-  primary: '#2563EB',
-  primarySoft: '#EFF6FF',
-  dangerSoft: '#FEF2F2',
-  divider: '#E6ECF2',
-  input: '#FFFFFF',
-  placeholder: '#78869D',
-  userBubble: '#DBEAFE',
-  userBorder: '#93C5FD',
-};
-
-const DARK_THEME: AppTheme = {
-  scheme: 'dark',
-  gradient: ['#0B1020', '#111827', '#172033'],
-  statusBar: 'light-content',
-  text: '#E5E7EB',
-  muted: '#94A3B8',
-  subtle: '#CBD5E1',
-  surface: '#111827',
-  surfaceAlt: '#1F2937',
-  border: '#334155',
-  strong: '#F8FAFC',
-  primary: '#60A5FA',
-  primarySoft: '#172554',
-  dangerSoft: '#3F1D24',
-  divider: '#334155',
-  input: '#111827',
-  placeholder: '#94A3B8',
-  userBubble: '#1E3A8A',
-  userBorder: '#2563EB',
-};
-
-function resolveTheme(mode: ThemeMode, systemScheme: 'light' | 'dark' | null | undefined): AppTheme {
-  const scheme = mode === 'system' ? systemScheme ?? 'light' : mode;
-  return scheme === 'dark' ? DARK_THEME : LIGHT_THEME;
-}
-
-function compareVersions(first: string, second: string): number {
-  const a = first.replace(/^v/i, '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
-  const b = second.replace(/^v/i, '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index++) {
-    const diff = (a[index] ?? 0) - (b[index] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
-function normalizeSystemColorScheme(value: ColorSchemeName | null | undefined): 'light' | 'dark' | null {
-  return value === 'dark' || value === 'light' ? value : null;
-}
-
-function createConversation(profile: ApiProfile, defaultTitle: string): ConversationRecord {
-  const now = new Date().toISOString();
-  return {
-    id: makeId('conversation'),
-    title: defaultTitle,
-    model: profile.model,
-    assistantKind: classifyModel(profile.model),
-    createdAt: now,
-    updatedAt: now,
-    pinned: false,
-    previousResponseId: null,
-    messages: [],
-  };
-}
-
-function trimTitle(value: string, defaultTitle: string): string {
-  const compact = value.trim().replace(/\s+/g, ' ');
-  if (!compact) return defaultTitle;
-  return compact.length > 36 ? `${compact.slice(0, 36)}...` : compact;
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
-function upsertConversation(
-  conversations: ConversationRecord[],
-  conversation: ConversationRecord
-): ConversationRecord[] {
-  const next = conversations.filter((item) => item.id !== conversation.id);
-  return [conversation, ...next];
-}
-
-function sortConversationsForList(conversations: ConversationRecord[]): ConversationRecord[] {
-  return [...conversations].sort((a, b) => {
-    if (a.pinned !== b.pinned) {
-      return a.pinned ? -1 : 1;
-    }
-    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-  });
-}
-
-function getConversationAttachments(conversation: ConversationRecord): AttachmentRecord[] {
-  return conversation.messages.flatMap((message) => message.attachments);
-}
-
-function getAllConversationAttachments(conversations: ConversationRecord[]): AttachmentRecord[] {
-  return conversations.flatMap(getConversationAttachments);
-}
-
-function normalizeMessageVariants(message: ChatMessage, assistantMessage?: ChatMessage): ChatMessageVariant[] {
-  const existing = message.variants && message.variants.length > 0
-    ? message.variants
-    : [
-        {
-          id: makeId('variant'),
-          text: message.text,
-          createdAt: message.createdAt,
-          attachments: message.attachments,
-          assistantMessageId: assistantMessage?.id,
-          assistantText: assistantMessage?.text,
-          assistantResponseId: assistantMessage?.responseId,
-          assistantError: assistantMessage?.error,
-        },
-      ];
-
-  const activeIndex = Math.min(Math.max(message.activeVariantIndex ?? 0, 0), existing.length - 1);
-  const normalized = [...existing];
-  normalized[activeIndex] = {
-    ...normalized[activeIndex],
-    text: message.text,
-    createdAt: message.createdAt,
-    attachments: message.attachments,
-    assistantMessageId: assistantMessage?.id ?? normalized[activeIndex].assistantMessageId,
-    assistantText: assistantMessage?.text ?? normalized[activeIndex].assistantText,
-    assistantResponseId: assistantMessage?.responseId ?? normalized[activeIndex].assistantResponseId,
-    assistantError: assistantMessage?.error ?? normalized[activeIndex].assistantError,
-  };
-  return normalized;
-}
-
-function sanitizeProfile(profile: ApiProfile): ApiProfile {
-  const model = profile.model.trim() || DEFAULT_PROFILE.model;
-  const reasoningEffort = profile.reasoningEffort ?? DEFAULT_PROFILE.reasoningEffort;
-  return {
-    ...DEFAULT_PROFILE,
-    ...profile,
-    id: profile.id || makeId('profile'),
-    label: profile.label.trim() || DEFAULT_PROFILE.label,
-    apiProtocol: profile.apiProtocol ?? DEFAULT_PROFILE.apiProtocol,
-    baseUrl: profile.baseUrl.trim() || DEFAULT_PROFILE.baseUrl,
-    model,
-    projectId: profile.projectId.trim(),
-    organization: profile.organization.trim(),
-    systemPrompt: profile.systemPrompt.trim(),
-    reasoningEffort,
-    cachedModels: uniqueStrings([model, ...(profile.cachedModels ?? [])]),
-    cachedReasoningEfforts: uniqueStrings([reasoningEffort, ...(profile.cachedReasoningEfforts ?? [])]) as ReasoningEffort[],
-  };
-}
-
-function getActiveProfile(state: PersistedState): ApiProfile {
-  return state.profiles.find((profile) => profile.id === state.activeProfileId) ?? state.profile;
-}
-
-function upsertProfile(profiles: ApiProfile[], profile: ApiProfile): ApiProfile[] {
-  const exists = profiles.some((item) => item.id === profile.id);
-  if (!exists) {
-    return [...profiles, profile];
-  }
-  return profiles.map((item) => (item.id === profile.id ? profile : item));
-}
-
-function applyApiPreset(profile: ApiProfile, preset: (typeof API_PRESETS)[number]): ApiProfile {
-  return {
-    ...profile,
-    apiProtocol: preset.apiProtocol,
-    baseUrl: preset.baseUrl,
-    model: preset.model,
-    storeResponses: preset.storeResponses,
-    reasoningEffort: preset.reasoningEffort,
-    cachedModels: [preset.model],
-    cachedReasoningEfforts: [preset.reasoningEffort],
-    projectId: preset.id === 'deepseek' ? '' : profile.projectId,
-    organization: preset.id === 'deepseek' ? '' : profile.organization,
-  };
-}
-
-function inferReasoningEffortOptions(profile: ApiProfile): ReasoningEffort[] {
-  const model = profile.model.trim().toLowerCase();
-  if (!modelSupportsReasoning(profile.model)) {
-    return ['none'];
-  }
-
-  if (profile.apiProtocol === 'chatCompletions') {
-    if (model.startsWith('deepseek-v4') || model === 'deepseek-reasoner') {
-      return ['none', 'high', 'xhigh'];
-    }
-    return ['none'];
-  }
-
-  if (model.startsWith('gpt-5') || /^o\d/.test(model)) {
-    return REASONING_EFFORT_OPTIONS;
-  }
-
-  return ['none'];
-}
-
-function getCachedModelsForProfile(profile: ApiProfile): string[] {
-  return uniqueStrings([profile.model, ...(profile.cachedModels ?? [])]);
-}
-
-function getCachedReasoningEffortsForProfile(profile: ApiProfile): ReasoningEffort[] {
-  return uniqueStrings([profile.reasoningEffort, ...(profile.cachedReasoningEfforts ?? [])]) as ReasoningEffort[];
-}
-
-function profileHasAdvancedValues(profile: ApiProfile): boolean {
-  return (
-    profile.projectId.trim().length > 0 ||
-    profile.organization.trim().length > 0 ||
-    profile.systemPrompt.trim().length > 0 ||
-    profile.storeResponses
-  );
-}
-
-function normalizeSearchText(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function conversationMatchesQuery(conversation: ConversationRecord, query: string): boolean {
-  if (!query) {
-    return true;
-  }
-
-  const searchable = [
-    conversation.title,
-    conversation.model,
-    ...conversation.messages.map((message) => message.text),
-    ...conversation.messages.flatMap((message) => message.attachments.map((attachment) => attachment.name)),
-  ]
-    .join('\n')
-    .toLowerCase();
-
-  return searchable.includes(query);
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function formatRelativeTime(value: string, language: UiLanguage): string {
-  const date = new Date(value);
-  const timestamp = date.getTime();
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) {
-    return language === 'zh' ? '刚刚' : 'Just now';
-  }
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return language === 'zh' ? `${minutes}分钟前` : `${minutes}m ago`;
-  }
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return language === 'zh' ? `${hours}小时前` : `${hours}h ago`;
-  }
-  const days = Math.floor(hours / 24);
-  if (days < 7) {
-    return language === 'zh' ? `${days}天前` : `${days}d ago`;
-  }
-
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-function formatConversationMarkdown(conversation: ConversationRecord): string {
-  const lines = [
-    `# ${conversation.title}`,
-    '',
-    `- Model: ${conversation.model}`,
-    `- Created: ${formatDateTime(conversation.createdAt)}`,
-    `- Updated: ${formatDateTime(conversation.updatedAt)}`,
-    '',
-  ];
-
-  for (const message of conversation.messages) {
-    lines.push(`## ${message.role === 'user' ? 'User' : 'Assistant'} - ${formatDateTime(message.createdAt)}`);
-    lines.push('');
-    lines.push(message.text.trim() || '(empty)');
-    if (message.error) {
-      lines.push('');
-      lines.push(`Error: ${message.error}`);
-    }
-    if (message.attachments.length > 0) {
-      lines.push('');
-      lines.push('Attachments:');
-      for (const attachment of message.attachments) {
-        lines.push(`- ${attachment.kind}: ${attachment.name}`);
-      }
-    }
-    lines.push('');
-  }
-
-  return lines.join('\n');
-}
-
-function MenuIcon({ color = '#1F2937' }: { color?: string }) {
-  return <Menu size={20} color={color} strokeWidth={2.3} />;
-}
-
-function PlusIcon({ light = false, color }: { light?: boolean; color?: string }) {
-  return <Plus size={20} color={color ?? (light ? '#FFFFFF' : '#1F2937')} strokeWidth={2.4} />;
-}
-
-function MoreIcon({ color = '#1F2937' }: { color?: string }) {
-  return <MoreHorizontal size={21} color={color} strokeWidth={2.4} />;
-}
-
-function SearchIcon({ color = '#111827' }: { color?: string }) {
-  return <Search size={20} color={color} strokeWidth={2.3} />;
-}
-
-function SettingsIcon({ color = '#111827' }: { color?: string }) {
-  return <Settings size={20} color={color} strokeWidth={2.3} />;
-}
-
-function DirectionIcon({ direction, light = false, color: iconColor }: { direction: 'up' | 'down' | 'left' | 'right'; light?: boolean; color?: string }) {
-  const color = iconColor ?? (light ? '#FFFFFF' : '#334155');
-  if (direction === 'left') return <ChevronLeft size={18} color={color} strokeWidth={2.5} />;
-  if (direction === 'right') return <ChevronRight size={18} color={color} strokeWidth={2.5} />;
-  return <ChevronUp size={18} color={color} strokeWidth={2.5} style={direction === 'down' ? styles.iconRotateDown : undefined} />;
-}
-
-function SendIcon({ light = true }: { light?: boolean }) {
-  return <Send size={16} color={light ? '#FFFFFF' : '#2563EB'} strokeWidth={2.4} />;
-}
-
-function StopIcon() {
-  return <Square size={13} color="#FFFFFF" fill="#FFFFFF" strokeWidth={2.2} />;
-}
-
-function CheckIcon() {
-  return <Check size={15} color="#FFFFFF" strokeWidth={3} />;
-}
-
-function PinIcon({ light = false }: { light?: boolean }) {
-  return <Pin size={16} color={light ? '#E5E7EB' : '#2563EB'} strokeWidth={2.4} />;
-}
-
-function EditIcon() {
-  return <Edit3 size={17} color="#E5E7EB" strokeWidth={2.3} />;
-}
-
-function TrashIcon() {
-  return <Trash2 size={17} color="#FCA5A5" strokeWidth={2.3} />;
-}
-
-function GitHubIcon({ color = '#24292F' }: { color?: string }) {
-  return (
-    <Svg width={15} height={15} viewBox="0 0 98 96" fill="none">
-      <Path
-        fill={color}
-        d="M48.9 0C21.9 0 0 22 0 49.1c0 21.7 14 40 33.4 46.5 2.4.5 3.3-1.1 3.3-2.4v-8.4c-13.6 3-16.5-6.6-16.5-6.6-2.2-5.7-5.4-7.2-5.4-7.2-4.4-3 .3-2.9.3-2.9 4.9.3 7.5 5.1 7.5 5.1 4.3 7.5 11.4 5.3 14.2 4.1.4-3.2 1.7-5.3 3.1-6.6-10.9-1.2-22.3-5.5-22.3-24.3 0-5.4 1.9-9.8 5-13.2-.5-1.2-2.2-6.2.5-13 0 0 4.1-1.3 13.4 5 3.9-1.1 8.1-1.6 12.3-1.6s8.4.6 12.3 1.6c9.3-6.3 13.4-5 13.4-5 2.7 6.8 1 11.8.5 13 3.1 3.4 5 7.8 5 13.2 0 18.9-11.5 23.1-22.4 24.3 1.8 1.5 3.3 4.5 3.3 9.1v13.4c0 1.3.9 2.9 3.4 2.4C84 89.1 98 70.7 98 49.1 97.9 22 75.9 0 48.9 0Z"
-      />
-    </Svg>
-  );
-}
-
 export default function App() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
@@ -1150,6 +240,8 @@ export default function App() {
   const composerAutoLiftTargetRef = useRef(0);
   const composerAutoLiftCurrentRef = useRef(0);
   const keyboardVisibleRef = useRef(false);
+  const keyboardInsetBottomRef = useRef(0);
+  const keyboardTopRef = useRef<number | null>(null);
   const shouldScrollToBottomRef = useRef(true);
   const autoFollowScrollRef = useRef(true);
   const skipNextPersistRef = useRef(false);
@@ -1166,6 +258,8 @@ export default function App() {
   const sessionDrawerAnimationIdRef = useRef(0);
   const sessionDrawerClosingRef = useRef(false);
   const sessionDrawerCloseFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionDrawerDragFrameRef = useRef<number | null>(null);
+  const sessionDrawerDragTargetRef = useRef(-Math.max(1, Math.min(windowWidth, 520)));
   const drawerGestureOpeningRef = useRef(false);
   const settingsPanelTranslateX = useRef(new Animated.Value(0)).current;
   const settingsContentProgress = useRef(new Animated.Value(1)).current;
@@ -1176,14 +270,11 @@ export default function App() {
   const settingsReturnTargetRef = useRef<'chat' | 'drawer'>('chat');
   const settingsTouchStartRef = useRef<{ x: number; y: number } | null>(null);
   const settingsTouchHasClosedRef = useRef(false);
-  const sessionTouchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const sessionTouchActiveRef = useRef(false);
-  const sessionTouchLastDxRef = useRef(0);
   const bottomSheetTranslateY = useRef(new Animated.Value(420)).current;
   const bottomSheetBackdropOpacity = useRef(new Animated.Value(0)).current;
   const bottomSheetAnimationIdRef = useRef(0);
   const bottomSheetCloseFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const bottomSheetContentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bottomSheetAfterCloseRef = useRef<(() => void) | null>(null);
   const [ready, setReady] = useState(false);
   const [persisted, setPersisted] = useState<PersistedState>(EMPTY_STATE);
   const [apiKey, setApiKey] = useState('');
@@ -1197,10 +288,8 @@ export default function App() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [chatMenuVisible, setChatMenuVisible] = useState(false);
   const [sessionsVisible, setSessionsVisible] = useState(false);
-  const [apiProfilesVisible, setApiProfilesVisible] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
-  const [bottomSheetMode, setBottomSheetMode] = useState<'models' | 'profiles' | null>(null);
-  const [bottomSheetContentReady, setBottomSheetContentReady] = useState(true);
+  const [bottomSheetMode, setBottomSheetMode] = useState<'models' | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [checkingVersion, setCheckingVersion] = useState(false);
@@ -1235,9 +324,16 @@ export default function App() {
   const activeLastMessage = activeConversation?.messages[activeConversation.messages.length - 1] ?? null;
   const activeLastMessageTextLength = activeLastMessage?.text.length ?? 0;
   const normalizedSessionSearch = normalizeSearchText(sessionSearchQuery);
-  const sortedConversations = sortConversationsForList(persisted.conversations);
-  const visibleConversations = sortedConversations.filter((conversation) =>
-    conversationMatchesQuery(conversation, normalizedSessionSearch)
+  const sortedConversations = useMemo(
+    () => sortConversationsForList(persisted.conversations),
+    [persisted.conversations]
+  );
+  const visibleConversations = useMemo(
+    () =>
+      sortedConversations.filter((conversation) =>
+        conversationMatchesQuery(conversation, normalizedSessionSearch)
+      ),
+    [normalizedSessionSearch, sortedConversations]
   );
   const renamingConversation =
     persisted.conversations.find((conversation) => conversation.id === renamingConversationId) ?? null;
@@ -1254,32 +350,27 @@ export default function App() {
         onMoveShouldSetPanResponder: (_, gestureState) =>
           isSensitiveSessionCloseSwipe(gestureState),
         onPanResponderGrant: () => {
+          cancelSessionDrawerDragFrame();
           sessionDrawerTranslateX.stopAnimation();
         },
         onPanResponderMove: (_, gestureState) => {
-          sessionDrawerTranslateX.setValue(
-            Math.max(-sessionDrawerHiddenOffsetRef.current, Math.min(0, gestureState.dx))
-          );
+          setSessionDrawerPosition(Math.max(-sessionDrawerHiddenOffsetRef.current, Math.min(0, gestureState.dx)));
         },
         onPanResponderRelease: (_, gestureState) => {
           if (gestureState.dx < -SESSION_CLOSE_SWIPE_MIN_DISTANCE || gestureState.vx < -0.03) {
-            closeSessionsDrawer();
+            closeSessionsDrawer(true, gestureState.vx);
             return;
           }
-          Animated.timing(sessionDrawerTranslateX, {
-            toValue: 0,
-            duration: 170,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }).start();
+          const animationId = sessionDrawerAnimationIdRef.current + 1;
+          sessionDrawerAnimationIdRef.current = animationId;
+          sessionDrawerClosingRef.current = false;
+          animateSessionDrawerTo(0, animationId, gestureState.vx);
         },
         onPanResponderTerminate: () => {
-          Animated.timing(sessionDrawerTranslateX, {
-            toValue: 0,
-            duration: 170,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }).start();
+          const animationId = sessionDrawerAnimationIdRef.current + 1;
+          sessionDrawerAnimationIdRef.current = animationId;
+          sessionDrawerClosingRef.current = false;
+          animateSessionDrawerTo(0, animationId);
         },
         onPanResponderTerminationRequest: () => false,
       }),
@@ -1289,34 +380,45 @@ export default function App() {
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponderCapture: (_, gestureState) => {
-          if (sessionsVisible || settingsVisible || apiProfilesVisible || modelPickerVisible || chatMenuVisible) {
+          if (
+            sessionsVisible ||
+            settingsVisible ||
+            modelPickerVisible ||
+            chatMenuVisible
+          ) {
             return false;
           }
           return isLooseDirectionalSwipe(gestureState, 'right', 7);
         },
         onMoveShouldSetPanResponder: (_, gestureState) => {
-          if (sessionsVisible || settingsVisible || apiProfilesVisible || modelPickerVisible || chatMenuVisible) {
+          if (
+            sessionsVisible ||
+            settingsVisible ||
+            modelPickerVisible ||
+            chatMenuVisible
+          ) {
             return false;
           }
           return isLooseDirectionalSwipe(gestureState, 'right', 7);
         },
         onPanResponderGrant: () => {
           drawerGestureOpeningRef.current = true;
+          cancelSessionDrawerDragFrame();
           sessionDrawerTranslateX.stopAnimation();
           setSessionsVisible(true);
           sessionDrawerTranslateX.setValue(-sessionDrawerHiddenOffsetRef.current);
         },
         onPanResponderMove: (_, gestureState) => {
           const nextX = Math.min(0, -sessionDrawerHiddenOffsetRef.current + Math.max(0, gestureState.dx));
-          sessionDrawerTranslateX.setValue(nextX);
+          setSessionDrawerPosition(nextX);
         },
         onPanResponderRelease: (_, gestureState) => {
           drawerGestureOpeningRef.current = false;
           if (gestureState.dx > windowWidth * 0.14 || gestureState.vx > 0.38) {
-            openSessionsDrawer();
+            openSessionsDrawer(gestureState.vx);
             return;
           }
-          closeSessionsDrawer();
+          closeSessionsDrawer(true, gestureState.vx);
         },
         onPanResponderTerminate: () => {
           drawerGestureOpeningRef.current = false;
@@ -1325,7 +427,6 @@ export default function App() {
         onPanResponderTerminationRequest: () => false,
       }),
     [
-      apiProfilesVisible,
       chatMenuVisible,
       modelPickerVisible,
       sessionDrawerTranslateX,
@@ -1451,21 +552,70 @@ export default function App() {
   }, [persisted.activeConversationId, persisted.conversations, ready]);
 
   useEffect(() => {
-    if (!sessionsVisible) {
-      return;
-    }
-    if (drawerGestureOpeningRef.current) {
-      return;
-    }
-    openSessionsDrawer();
-  }, [sessionDrawerTranslateX, sessionsVisible, windowWidth]);
-
-  useEffect(() => {
     if (sessionsVisible || drawerGestureOpeningRef.current) {
       return;
     }
     sessionDrawerTranslateX.setValue(-sessionDrawerHiddenOffsetRef.current);
+    sessionDrawerDragTargetRef.current = -sessionDrawerHiddenOffsetRef.current;
   }, [sessionDrawerTranslateX, sessionsVisible, windowWidth]);
+
+  function setSessionDrawerPosition(nextX: number) {
+    sessionDrawerDragTargetRef.current = nextX;
+    if (sessionDrawerDragFrameRef.current !== null) {
+      return;
+    }
+    sessionDrawerDragFrameRef.current = requestAnimationFrame(() => {
+      sessionDrawerDragFrameRef.current = null;
+      sessionDrawerTranslateX.setValue(sessionDrawerDragTargetRef.current);
+    });
+  }
+
+  function cancelSessionDrawerDragFrame() {
+    if (sessionDrawerDragFrameRef.current !== null) {
+      cancelAnimationFrame(sessionDrawerDragFrameRef.current);
+      sessionDrawerDragFrameRef.current = null;
+    }
+  }
+
+  function flushSessionDrawerDragPosition() {
+    cancelSessionDrawerDragFrame();
+    const nextX = clampNumber(sessionDrawerDragTargetRef.current, -sessionDrawerHiddenOffsetRef.current, 0);
+    sessionDrawerDragTargetRef.current = nextX;
+    sessionDrawerTranslateX.setValue(nextX);
+    return nextX;
+  }
+
+  function animateSessionDrawerTo(
+    toValue: number,
+    animationId: number,
+    velocity = 0,
+    onComplete?: () => void
+  ) {
+    const fromValue = flushSessionDrawerDragPosition();
+    const distance = Math.abs(toValue - fromValue);
+    const duration = getDistanceDuration(
+      distance,
+      sessionDrawerHiddenOffsetRef.current,
+      DRAWER_SETTLE_MIN_DURATION_MS,
+      DRAWER_SETTLE_MAX_DURATION_MS,
+      velocity
+    );
+    sessionDrawerDragTargetRef.current = toValue;
+    Animated.timing(sessionDrawerTranslateX, {
+      toValue,
+      duration,
+      easing: MOTION_SETTLE_EASING,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished || sessionDrawerAnimationIdRef.current !== animationId) {
+        return;
+      }
+      sessionDrawerTranslateX.setValue(toValue);
+      sessionDrawerDragTargetRef.current = toValue;
+      onComplete?.();
+    });
+    return duration;
+  }
 
   useEffect(() => {
     if (!settingsVisible) {
@@ -1509,6 +659,10 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (hasKeyboardInsetsBridge()) {
+      return undefined;
+    }
+
     const keyboardShowEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const keyboardHideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const showSubscription = Keyboard.addListener(keyboardShowEvent, () => {
@@ -1541,6 +695,31 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    const unsubscribe = subscribeKeyboardInsets((event) => {
+      const bottom = Math.max(0, Math.round(event.bottom ?? 0));
+      const screenY = Math.max(0, Math.round(event.screenY ?? 0));
+      keyboardInsetBottomRef.current = bottom;
+      keyboardTopRef.current = screenY > 0 ? screenY : null;
+      keyboardVisibleRef.current = bottom > 0 || event.visible === true;
+      if (bottom > 0 && composerKeyboardResetTimerRef.current) {
+        clearTimeout(composerKeyboardResetTimerRef.current);
+        composerKeyboardResetTimerRef.current = null;
+      }
+      if (bottom <= 0) {
+        resetComposerAutoLift();
+        return;
+      }
+      updateComposerAutoLift();
+    });
+
+    if (!unsubscribe) {
+      return undefined;
+    }
+
+    return unsubscribe;
+  }, [windowHeight, windowWidth]);
+
+  useEffect(() => {
     if (!shouldScrollToBottomRef.current) {
       return;
     }
@@ -1556,7 +735,61 @@ export default function App() {
     pendingAttachments.length,
     settingsVisible,
     sessionsVisible,
-    apiProfilesVisible,
+  ]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
+      return undefined;
+    }
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (sessionContextConversation) {
+        setSessionContextMenuId(null);
+        return true;
+      }
+      if (renamingConversation) {
+        closeRenameModal();
+        return true;
+      }
+      if (composerExpanded) {
+        setComposerExpanded(false);
+        return true;
+      }
+      if (modelPickerVisible) {
+        closeBottomSheet();
+        return true;
+      }
+      if (settingsVisible) {
+        goBackFromSettings();
+        return true;
+      }
+      if (sessionsVisible) {
+        closeSessionsDrawer();
+        return true;
+      }
+      if (chatMenuVisible) {
+        setChatMenuVisible(false);
+        return true;
+      }
+      if (attachmentMenuVisible) {
+        setAttachmentMenuVisible(false);
+        return true;
+      }
+      return false;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [
+    attachmentMenuVisible,
+    chatMenuVisible,
+    composerExpanded,
+    modelPickerVisible,
+    renamingConversation,
+    sessionContextConversation,
+    sessionsVisible,
+    settingsVisible,
   ]);
 
   useEffect(
@@ -1570,14 +803,15 @@ export default function App() {
       if (sessionDrawerCloseFallbackRef.current) {
         clearTimeout(sessionDrawerCloseFallbackRef.current);
       }
+      if (sessionDrawerDragFrameRef.current !== null) {
+        cancelAnimationFrame(sessionDrawerDragFrameRef.current);
+        sessionDrawerDragFrameRef.current = null;
+      }
       if (settingsPanelCloseFallbackRef.current) {
         clearTimeout(settingsPanelCloseFallbackRef.current);
       }
       if (bottomSheetCloseFallbackRef.current) {
         clearTimeout(bottomSheetCloseFallbackRef.current);
-      }
-      if (bottomSheetContentTimerRef.current) {
-        clearTimeout(bottomSheetContentTimerRef.current);
       }
       if (composerLiftFrameRef.current !== null) {
         cancelAnimationFrame(composerLiftFrameRef.current);
@@ -1601,9 +835,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!ready || Platform.OS !== 'android') return;
-    const sharedImageModule = NativeModules.SharedImage as SharedImageNativeModule | undefined;
-    if (!sharedImageModule) return;
+    if (!ready || !hasSharedImageBridge()) return;
 
     let mounted = true;
     const appendSharedImages = async (inputs: SharedImageInput[]) => {
@@ -1629,12 +861,11 @@ export default function App() {
           Alert.alert(copy.imagePickerFailed, error instanceof Error ? error.message : copy.imagePickerFailedFallback);
         }
       } finally {
-        sharedImageModule.clear?.();
+        clearSharedImages();
       }
     };
 
-    sharedImageModule
-      .getInitialImages?.()
+    getInitialSharedImages()
       .then((images) => {
         if (mounted && Array.isArray(images)) {
           void appendSharedImages(images);
@@ -1642,8 +873,7 @@ export default function App() {
       })
       .catch(() => undefined);
 
-    const emitter = new NativeEventEmitter(NativeModules.SharedImage);
-    const subscription = emitter.addListener('SharedImages', (images: SharedImageInput[]) => {
+    const unsubscribe = subscribeSharedImages((images) => {
       if (Array.isArray(images)) {
         void appendSharedImages(images);
       }
@@ -1651,7 +881,7 @@ export default function App() {
 
     return () => {
       mounted = false;
-      subscription.remove();
+      unsubscribe?.();
     };
   }, [copy.imagePickerFailed, copy.imagePickerFailedFallback, ready]);
 
@@ -1687,6 +917,12 @@ export default function App() {
 
     composerLiftAnimationIdRef.current = animationId;
     composerAutoLiftTargetRef.current = normalizedLift;
+    if (Platform.OS === 'android') {
+      composerLiftTranslateY.stopAnimation();
+      composerLiftTranslateY.setValue(-normalizedLift);
+      composerAutoLiftCurrentRef.current = normalizedLift;
+      return;
+    }
     composerLiftTranslateY.stopAnimation((value) => {
       if (animationId !== composerLiftAnimationIdRef.current) {
         return;
@@ -1715,8 +951,34 @@ export default function App() {
     });
   }
 
+  function getKeyboardTop() {
+    if (Platform.OS === 'android') {
+      if (keyboardTopRef.current !== null) {
+        return Math.max(0, Math.min(windowHeight, keyboardTopRef.current));
+      }
+      if (keyboardInsetBottomRef.current > 0) {
+        return Math.max(0, windowHeight - keyboardInsetBottomRef.current);
+      }
+      return windowHeight;
+    }
+
+    const metrics = Keyboard.metrics();
+    if (!metrics || metrics.height <= 0) {
+      return windowHeight;
+    }
+
+    const fallbackTop = windowHeight - metrics.height;
+    const frameTop =
+      Number.isFinite(metrics.screenY) && metrics.screenY > 0 && metrics.screenY < windowHeight
+        ? metrics.screenY
+        : fallbackTop;
+    return Math.max(0, Math.min(windowHeight, frameTop));
+  }
+
   function resetComposerAutoLift() {
     keyboardVisibleRef.current = false;
+    keyboardInsetBottomRef.current = 0;
+    keyboardTopRef.current = null;
     composerLiftMeasureIdRef.current += 1;
     if (composerLiftFrameRef.current !== null) {
       cancelAnimationFrame(composerLiftFrameRef.current);
@@ -1736,11 +998,10 @@ export default function App() {
     }
 
     if (composerLiftFrameRef.current !== null) {
-      cancelAnimationFrame(composerLiftFrameRef.current);
+      return;
     }
 
-    const measureId = composerLiftMeasureIdRef.current + 1;
-    composerLiftMeasureIdRef.current = measureId;
+    const measureId = composerLiftMeasureIdRef.current;
     composerLiftFrameRef.current = requestAnimationFrame(() => {
       composerLiftFrameRef.current = null;
       if (!keyboardVisibleRef.current || measureId !== composerLiftMeasureIdRef.current) {
@@ -1751,10 +1012,18 @@ export default function App() {
           return;
         }
         const desiredGap = compactWindow ? Math.max(4, COMPOSER_VISIBLE_BOTTOM_GAP - 3) : COMPOSER_VISIBLE_BOTTOM_GAP;
+        const keyboardTop = getKeyboardTop();
+        const keyboardTargetBottom = keyboardTop - desiredGap;
         const bottomGap = windowHeight - (y + height);
         const currentLift = composerAutoLiftCurrentRef.current;
-        const maxLift = Math.max(0, Math.round(windowHeight * 0.35));
-        const nextLift = Math.min(maxLift, Math.max(0, Math.round(currentLift + desiredGap - bottomGap)));
+        const keyboardLift = Math.max(0, Math.round(currentLift + y + height - keyboardTargetBottom));
+        const bottomGapLift = Math.max(0, Math.round(currentLift + desiredGap - bottomGap));
+        const keyboardHeight = Math.max(0, windowHeight - keyboardTop);
+        const maxLift = Math.max(
+          0,
+          Math.round(Math.min(windowHeight * 0.7, Math.max(windowHeight * 0.35, keyboardHeight + desiredGap)))
+        );
+        const nextLift = Math.min(maxLift, Math.max(keyboardLift, bottomGapLift));
         animateComposerAutoLiftTo(nextLift, nextLift === 0);
       });
     });
@@ -1875,43 +1144,40 @@ export default function App() {
     closeSettingsPanel();
   }
 
-  function openBottomSheet(mode: 'models' | 'profiles') {
+  function getBottomSheetHiddenOffset() {
+    return Math.max(420, Math.ceil(windowHeight * 0.74));
+  }
+
+  function openBottomSheet() {
     const animationId = bottomSheetAnimationIdRef.current + 1;
     bottomSheetAnimationIdRef.current = animationId;
+    const hiddenOffset = getBottomSheetHiddenOffset();
     if (bottomSheetCloseFallbackRef.current) {
       clearTimeout(bottomSheetCloseFallbackRef.current);
       bottomSheetCloseFallbackRef.current = null;
     }
-    if (bottomSheetContentTimerRef.current) {
-      clearTimeout(bottomSheetContentTimerRef.current);
-      bottomSheetContentTimerRef.current = null;
-    }
+    bottomSheetAfterCloseRef.current = null;
     bottomSheetTranslateY.stopAnimation();
     bottomSheetBackdropOpacity.stopAnimation();
-    bottomSheetTranslateY.setValue(Math.max(windowHeight, 420));
+    bottomSheetTranslateY.setValue(hiddenOffset);
     bottomSheetBackdropOpacity.setValue(0);
-    setBottomSheetContentReady(mode !== 'profiles');
-    setBottomSheetMode(mode);
-    setModelPickerVisible(mode === 'models');
-    setApiProfilesVisible(mode === 'profiles');
-    if (mode === 'profiles') {
-      bottomSheetContentTimerRef.current = setTimeout(() => {
-        if (bottomSheetAnimationIdRef.current === animationId) {
-          setBottomSheetContentReady(true);
-        }
-        bottomSheetContentTimerRef.current = null;
-      }, 210);
-    }
-    requestAnimationFrame(() => {
+    setBottomSheetMode('models');
+    setModelPickerVisible(true);
+    const startOpenAnimation = () => {
+      if (bottomSheetAnimationIdRef.current !== animationId) {
+        return;
+      }
       Animated.parallel([
         Animated.timing(bottomSheetBackdropOpacity, {
           toValue: 1,
-          duration: 150,
+          duration: SHEET_OPEN_DURATION_MS - 60,
+          easing: MOTION_SETTLE_EASING,
           useNativeDriver: true,
         }),
         Animated.timing(bottomSheetTranslateY, {
           toValue: 0,
-          duration: 190,
+          duration: SHEET_OPEN_DURATION_MS,
+          easing: MOTION_SETTLE_EASING,
           useNativeDriver: true,
         }),
       ]).start(({ finished }) => {
@@ -1920,18 +1186,19 @@ export default function App() {
           bottomSheetBackdropOpacity.setValue(1);
         }
       });
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(startOpenAnimation);
     });
   }
 
-  function closeBottomSheet(animate = true) {
+  function closeBottomSheet(animate = true, afterClose?: () => void) {
     const animationId = bottomSheetAnimationIdRef.current + 1;
     bottomSheetAnimationIdRef.current = animationId;
+    bottomSheetAfterCloseRef.current = afterClose ?? null;
+    const hiddenOffset = getBottomSheetHiddenOffset();
     if (bottomSheetCloseFallbackRef.current) {
       clearTimeout(bottomSheetCloseFallbackRef.current);
-    }
-    if (bottomSheetContentTimerRef.current) {
-      clearTimeout(bottomSheetContentTimerRef.current);
-      bottomSheetContentTimerRef.current = null;
     }
     bottomSheetTranslateY.stopAnimation();
     bottomSheetBackdropOpacity.stopAnimation();
@@ -1943,27 +1210,30 @@ export default function App() {
         clearTimeout(bottomSheetCloseFallbackRef.current);
         bottomSheetCloseFallbackRef.current = null;
       }
-      bottomSheetTranslateY.setValue(Math.max(windowHeight, 420));
+      bottomSheetTranslateY.setValue(hiddenOffset);
       bottomSheetBackdropOpacity.setValue(0);
       setBottomSheetMode(null);
       setModelPickerVisible(false);
-      setApiProfilesVisible(false);
-      setBottomSheetContentReady(true);
+      const complete = bottomSheetAfterCloseRef.current;
+      bottomSheetAfterCloseRef.current = null;
+      complete?.();
     };
     if (!animate) {
       finishClose();
       return;
     }
-    bottomSheetCloseFallbackRef.current = setTimeout(finishClose, 260);
+    bottomSheetCloseFallbackRef.current = setTimeout(finishClose, SHEET_CLOSE_DURATION_MS + 120);
     Animated.parallel([
       Animated.timing(bottomSheetBackdropOpacity, {
         toValue: 0,
-        duration: 120,
+        duration: SHEET_CLOSE_DURATION_MS - 40,
+        easing: MOTION_EXIT_EASING,
         useNativeDriver: true,
       }),
       Animated.timing(bottomSheetTranslateY, {
-        toValue: Math.max(windowHeight, 420),
-        duration: 190,
+        toValue: hiddenOffset,
+        duration: SHEET_CLOSE_DURATION_MS,
+        easing: MOTION_EXIT_EASING,
         useNativeDriver: true,
       }),
     ]).start(finishClose);
@@ -2004,58 +1274,6 @@ export default function App() {
   function handleSettingsTouchEnd() {
     settingsTouchStartRef.current = null;
     settingsTouchHasClosedRef.current = false;
-  }
-
-  function settleSessionDrawerAfterTouch() {
-    if (!sessionTouchActiveRef.current) {
-      return;
-    }
-
-    const shouldClose = sessionTouchLastDxRef.current < -SESSION_CLOSE_SWIPE_MIN_DISTANCE;
-    if (shouldClose) {
-      closeSessionsDrawer();
-      return;
-    }
-
-    Animated.timing(sessionDrawerTranslateX, {
-      toValue: 0,
-      duration: 170,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }
-
-  function handleSessionTouchStart(event: GestureResponderEvent) {
-    const { pageX, pageY } = event.nativeEvent;
-    sessionTouchStartRef.current = { x: pageX, y: pageY };
-    sessionTouchActiveRef.current = false;
-    sessionTouchLastDxRef.current = 0;
-    sessionDrawerTranslateX.stopAnimation();
-  }
-
-  function handleSessionTouchMove(event: GestureResponderEvent) {
-    const start = sessionTouchStartRef.current;
-    if (!start) {
-      return;
-    }
-
-    const { pageX, pageY } = event.nativeEvent;
-    const dx = pageX - start.x;
-    const dy = pageY - start.y;
-    if (!sessionTouchActiveRef.current && !isSensitiveSessionCloseDelta(dx, dy)) {
-      return;
-    }
-
-    sessionTouchActiveRef.current = true;
-    sessionTouchLastDxRef.current = dx;
-    sessionDrawerTranslateX.setValue(Math.max(-sessionDrawerHiddenOffsetRef.current, Math.min(0, dx)));
-  }
-
-  function handleSessionTouchEnd() {
-    settleSessionDrawerAfterTouch();
-    sessionTouchStartRef.current = null;
-    sessionTouchActiveRef.current = false;
-    sessionTouchLastDxRef.current = 0;
   }
 
   function openApiProfiles() {
@@ -2104,29 +1322,17 @@ export default function App() {
   async function checkLatestVersion() {
     setCheckingVersion(true);
     try {
-      const response = await fetch(LATEST_RELEASE_URL, {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`GitHub HTTP ${response.status}`);
-      }
-      const payload = await response.json() as { tag_name?: string; html_url?: string; name?: string };
-      const latest = (payload.tag_name || payload.name || '').replace(/^v/i, '').trim();
-      if (!latest) {
-        throw new Error('No release tag');
-      }
-      if (compareVersions(latest, APP_VERSION) > 0) {
+      const latest = await fetchLatestRelease();
+      if (isNewerRelease(latest.version)) {
         const buttons: AlertButton[] = [{ text: copy.close, style: 'cancel' }];
-        if (payload.html_url) {
+        const releaseUrl = latest.url;
+        if (releaseUrl) {
           buttons.push({
             text: copy.github,
-            onPress: () => openExternalUrl(payload.html_url as string),
+            onPress: () => openExternalUrl(releaseUrl),
           });
         }
-        Alert.alert(copy.latestVersionTitle, copy.latestVersionAvailable(latest), buttons);
+        Alert.alert(copy.latestVersionTitle, copy.latestVersionAvailable(latest.version), buttons);
       } else {
         Alert.alert(copy.latestVersionTitle, `${copy.latestVersionCurrent}\n\n${copy.versionLabel}: v${APP_VERSION}`);
       }
@@ -2343,28 +1549,28 @@ export default function App() {
     }
   }
 
-  async function attachFromCamera() {
+  async function attachPendingFrom(
+    pickAttachments: () => Promise<PendingAttachment[]>,
+    failedTitle: string,
+    fallbackMessage: string
+  ) {
     try {
-      appendPendingAttachments(await captureImageAttachment());
+      appendPendingAttachments(await pickAttachments());
     } catch (error) {
-      Alert.alert(copy.imagePickerFailed, error instanceof Error ? error.message : copy.imagePickerFailedFallback);
+      Alert.alert(failedTitle, error instanceof Error ? error.message : fallbackMessage);
     }
+  }
+
+  async function attachFromCamera() {
+    await attachPendingFrom(captureImageAttachment, copy.imagePickerFailed, copy.imagePickerFailedFallback);
   }
 
   async function attachImages() {
-    try {
-      appendPendingAttachments(await pickImageAttachments());
-    } catch (error) {
-      Alert.alert(copy.imagePickerFailed, error instanceof Error ? error.message : copy.imagePickerFailedFallback);
-    }
+    await attachPendingFrom(pickImageAttachments, copy.imagePickerFailed, copy.imagePickerFailedFallback);
   }
 
   async function attachFiles() {
-    try {
-      appendPendingAttachments(await pickDocumentAttachments());
-    } catch (error) {
-      Alert.alert(copy.filePickerFailed, error instanceof Error ? error.message : copy.filePickerFailedFallback);
-    }
+    await attachPendingFrom(pickDocumentAttachments, copy.filePickerFailed, copy.filePickerFailedFallback);
   }
 
   async function fetchModelsForProfile(profile: ApiProfile = activeProfile, key = apiKey) {
@@ -2425,7 +1631,7 @@ export default function App() {
 
   function openModelPicker() {
     setAvailableModels(getCachedModelsForProfile(activeProfile));
-    openBottomSheet('models');
+    openBottomSheet();
   }
 
   function applyModelToActiveProfile(model: string) {
@@ -2433,18 +1639,38 @@ export default function App() {
     if (!nextModel) {
       return;
     }
-    setPersisted((current) => {
-      const profile = getActiveProfile(current);
-      const updatedProfile: ApiProfile = { ...profile, model: nextModel, cachedModels: uniqueStrings([nextModel, ...(profile.cachedModels ?? [])]) };
-      const profiles = upsertProfile(current.profiles, updatedProfile);
-      return {
-        ...current,
-        profiles,
-        profile: updatedProfile,
-      };
+    closeBottomSheet(true, () => {
+      setPersisted((current) => {
+        const profile = getActiveProfile(current);
+        const updatedProfile: ApiProfile = { ...profile, model: nextModel, cachedModels: uniqueStrings([nextModel, ...(profile.cachedModels ?? [])]) };
+        const profiles = upsertProfile(current.profiles, updatedProfile);
+        return {
+          ...current,
+          profiles,
+          profile: updatedProfile,
+        };
+      });
+      setDraftProfile((current) => ({ ...current, model: nextModel }));
     });
-    setDraftProfile((current) => ({ ...current, model: nextModel }));
-    closeBottomSheet();
+  }
+
+  function renderModelOption({ item: model }: { item: string }) {
+    const active = activeProfile.model === model;
+    return (
+      <Pressable
+        style={[
+          styles.modelOption,
+          { backgroundColor: theme.surfaceAlt, borderColor: theme.border },
+          active && [styles.modelOptionSelected, themedSelected],
+        ]}
+        onPress={() => applyModelToActiveProfile(model)}
+      >
+        <Text style={[styles.modelOptionText, { color: theme.text }, active && { color: theme.primary }]} numberOfLines={1}>
+          {model}
+        </Text>
+        {active && <Text style={styles.profileStateActive}>{copy.activeModel}</Text>}
+      </Pressable>
+    );
   }
 
   function flushStreamingText() {
@@ -3032,7 +2258,7 @@ export default function App() {
     closeSettingsPanel({ returnToDrawer: false });
   }
 
-  function openSessionsDrawer() {
+  function openSessionsDrawer(velocity = 0) {
     const animationId = sessionDrawerAnimationIdRef.current + 1;
     sessionDrawerAnimationIdRef.current = animationId;
     sessionDrawerClosingRef.current = false;
@@ -3044,28 +2270,17 @@ export default function App() {
     }
     sessionDrawerTranslateX.stopAnimation();
     if (!sessionsVisible) {
+      cancelSessionDrawerDragFrame();
+      sessionDrawerDragTargetRef.current = -sessionDrawerHiddenOffsetRef.current;
       sessionDrawerTranslateX.setValue(-sessionDrawerHiddenOffsetRef.current);
     }
     setSessionsVisible(true);
     requestAnimationFrame(() => {
-      Animated.timing(sessionDrawerTranslateX, {
-        toValue: 0,
-        duration: 180,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished && sessionDrawerAnimationIdRef.current === animationId) {
-          sessionDrawerTranslateX.setValue(0);
-        }
-      });
+      animateSessionDrawerTo(0, animationId, velocity);
     });
   }
 
-  function closeSessionsDrawer(animate = true) {
-    if (animate && sessionDrawerClosingRef.current) {
-      return;
-    }
-
+  function closeSessionsDrawer(animate = true, velocity = 0) {
     const animationId = sessionDrawerAnimationIdRef.current + 1;
     sessionDrawerAnimationIdRef.current = animationId;
     sessionDrawerClosingRef.current = animate;
@@ -3084,6 +2299,7 @@ export default function App() {
       }
       sessionDrawerClosingRef.current = false;
       sessionDrawerTranslateX.setValue(-sessionDrawerHiddenOffsetRef.current);
+      sessionDrawerDragTargetRef.current = -sessionDrawerHiddenOffsetRef.current;
       setSessionsVisible(false);
       setSessionSelectionMode(false);
       setSelectedSessionIds([]);
@@ -3092,16 +2308,17 @@ export default function App() {
       setSessionSearchRaised(false);
     };
     if (!animate) {
+      cancelSessionDrawerDragFrame();
       finishClose();
       return;
     }
-    sessionDrawerCloseFallbackRef.current = setTimeout(finishClose, 260);
-    Animated.timing(sessionDrawerTranslateX, {
-      toValue: -sessionDrawerHiddenOffsetRef.current,
-      duration: 180,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start(finishClose);
+    const duration = animateSessionDrawerTo(
+      -sessionDrawerHiddenOffsetRef.current,
+      animationId,
+      velocity,
+      finishClose
+    );
+    sessionDrawerCloseFallbackRef.current = setTimeout(finishClose, duration + 120);
   }
 
   function openSettingsFromSessions() {
@@ -3429,7 +2646,7 @@ export default function App() {
           <View style={[styles.topBar, { paddingTop: topBarExtraInset }]}>
             <Pressable
               style={[styles.iconAction, { backgroundColor: theme.surface, borderColor: theme.border }]}
-              onPress={openSessionsDrawer}
+              onPress={() => openSessionsDrawer()}
               accessibilityRole="button"
               accessibilityLabel={copy.openSessions}
             >
@@ -3592,6 +2809,10 @@ export default function App() {
                     value={composerText}
                     onChangeText={setComposerText}
                     onFocus={() => {
+                      if (hasKeyboardInsetsBridge()) {
+                        startKeyboardInsetsTracking();
+                        return;
+                      }
                       keyboardVisibleRef.current = true;
                       updateComposerAutoLift();
                     }}
@@ -4038,20 +3259,6 @@ export default function App() {
                 </>
               )}
 
-              {settingsSection === 'plugins' && (
-                <View style={styles.infoPanel}>
-                  <Text style={styles.infoPanelTitle}>{copy.pluginsTitle}</Text>
-                  <Text style={styles.infoPanelText}>{copy.pluginsDescription}</Text>
-                  <View style={styles.pluginRow}>
-                    {getContentPlugins().map((plugin) => (
-                      <View key={plugin.id} style={styles.pluginBadge}>
-                        <Text style={styles.pluginBadgeText}>{plugin.label}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              )}
-
               {settingsSection === 'about' && (
                 <>
                   <View style={[styles.infoPanel, { backgroundColor: theme.surfaceAlt, borderColor: theme.border }]}>
@@ -4115,354 +3322,21 @@ export default function App() {
                 <Text style={styles.modalPrimaryText}>{fetchingModels ? copy.fetchingModels : copy.fetchModels}</Text>
               </Pressable>
             </View>
-            <ScrollView
+            <FlatList
               style={styles.modalScroll}
-              keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.modelListContent}
-            >
-              {availableModels.length === 0 ? (
+              data={availableModels}
+              keyExtractor={(model) => model}
+              renderItem={renderModelOption}
+              keyboardShouldPersistTaps="handled"
+              initialNumToRender={10}
+              maxToRenderPerBatch={8}
+              windowSize={5}
+              removeClippedSubviews={Platform.OS === 'android'}
+              ListEmptyComponent={
                 <Text style={[styles.emptySessionText, { color: theme.muted }]}>{copy.modelsEmpty}</Text>
-              ) : (
-                availableModels.map((model) => (
-                  <Pressable
-                    key={model}
-                    style={[
-                      styles.modelOption,
-                      { backgroundColor: theme.surfaceAlt, borderColor: theme.border },
-                      activeProfile.model === model && [styles.modelOptionSelected, themedSelected],
-                    ]}
-                    onPress={() => applyModelToActiveProfile(model)}
-                  >
-                    <Text style={[styles.modelOptionText, { color: theme.text }, activeProfile.model === model && { color: theme.primary }]}>
-                      {model}
-                    </Text>
-                    {activeProfile.model === model && <Text style={styles.profileStateActive}>{copy.activeModel}</Text>}
-                  </Pressable>
-                ))
-              )}
-            </ScrollView>
-          </Animated.View>
-        </View>
-      </Modal>
-
-      <Modal visible={apiProfilesVisible} animationType="none" transparent onRequestClose={() => closeBottomSheet()}>
-        <View style={styles.modalSheetRoot} pointerEvents={bottomSheetMode === 'profiles' ? 'auto' : 'none'}>
-          <Animated.View style={[styles.modalBackdropLayer, { opacity: bottomSheetBackdropOpacity }]} />
-          <Pressable style={styles.modalDismissArea} onPress={() => closeBottomSheet()} />
-          <Animated.View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border, transform: [{ translateY: bottomSheetTranslateY }] }]}>
-            <View style={styles.sessionHeader}>
-              <View style={styles.modalHeading}>
-                <Text style={[styles.modalTitle, { color: theme.text }]}>{copy.apiProfilesTitle}</Text>
-                <Text style={[styles.modalSubtitle, { color: theme.muted }]}>{copy.apiProfilesSubtitle}</Text>
-              </View>
-              <Pressable style={styles.modalPrimarySmall} onPress={createNewApiProfile}>
-                <Text style={styles.modalPrimaryText}>{copy.newApiProfile}</Text>
-              </Pressable>
-            </View>
-
-            {!bottomSheetContentReady ? (
-              <View style={styles.modalWarmup}>
-                <Text style={[styles.modalWarmupText, { color: theme.muted }]}>{copy.loading}</Text>
-              </View>
-            ) : (
-              <ScrollView
-                style={styles.modalScroll}
-                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-                keyboardShouldPersistTaps="handled"
-                nestedScrollEnabled
-              >
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.profileChipRow}>
-                  {persisted.profiles.map((profile) => {
-                    const isActive = profile.id === persisted.activeProfileId;
-                    const isEditing = profile.id === draftProfile.id;
-                    return (
-                      <Pressable
-                        key={profile.id}
-                        style={[
-                          styles.profileChip,
-                          themedPanel,
-                          isEditing && [styles.profileChipSelected, themedSelected],
-                        ]}
-                        onPress={() => {
-                          void selectDraftApiProfile(profile);
-                        }}
-                      >
-                        <Text style={[styles.profileChipTitle, { color: theme.text }, isEditing && { color: theme.primary }]}>
-                          {profile.label}
-                        </Text>
-                        <Text style={[styles.profileChipMeta, { color: theme.muted }, isEditing && { color: theme.primary }]} numberOfLines={1}>
-                          {isActive ? copy.activeApiProfile : profile.model}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-
-              <View style={styles.formSectionHeader}>
-                <Text style={[styles.sectionLabel, { color: theme.primary }]}>{copy.basicApiSettings}</Text>
-                <Text style={[styles.sectionValue, themedMutedText]} numberOfLines={1}>
-                  {draftProfile.model}
-                </Text>
-              </View>
-              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.profileLabel}</Text>
-              <TextInput
-                value={draftProfile.label}
-                onChangeText={(value) => setDraftProfile((current) => ({ ...current, label: value }))}
-                style={[styles.fieldInput, themedFieldInput]}
-                placeholder="My API"
-                placeholderTextColor={theme.placeholder}
-              />
-
-              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.apiPreset}</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
-                {API_PRESETS.map((preset) => {
-                  const selected =
-                    draftProfile.apiProtocol === preset.apiProtocol &&
-                    draftProfile.baseUrl === preset.baseUrl &&
-                    draftProfile.model === preset.model;
-                  return (
-                    <Pressable
-                      key={preset.id}
-                      style={[styles.suggestionChip, themedPanel, selected && [styles.selectedChip, themedSelected]]}
-                      onPress={() => updateDraftProfileWithReasoningReset((current) => applyApiPreset(current, preset))}
-                    >
-                      <Text style={[styles.suggestionChipText, themedSubtleText, selected && { color: theme.primary }]}>
-                        {preset.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-
-              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.endpointMode}</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
-                {API_PROTOCOL_OPTIONS.map((protocol) => (
-                  <Pressable
-                    key={protocol}
-                    style={[styles.suggestionChip, themedPanel, draftProfile.apiProtocol === protocol && [styles.selectedChip, themedSelected]]}
-                    onPress={() => updateDraftProfileWithReasoningReset((current) => ({ ...current, apiProtocol: protocol }))}
-                  >
-                    <Text
-                      style={[
-                        styles.suggestionChipText,
-                        themedSubtleText,
-                        draftProfile.apiProtocol === protocol && { color: theme.primary },
-                      ]}
-                    >
-                      {apiProtocolLabel(protocol, uiLanguage)}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-              <Text style={[styles.inlineHint, themedMutedText]}>{getEndpointHint(draftProfile.apiProtocol, uiLanguage)}</Text>
-
-              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.baseUrl}</Text>
-              <TextInput
-                value={draftProfile.baseUrl}
-                onChangeText={(value) => setDraftProfile((current) => ({ ...current, baseUrl: value }))}
-                style={[styles.fieldInput, themedFieldInput]}
-                autoCapitalize="none"
-                placeholder="https://api.openai.com/v1"
-                placeholderTextColor={theme.placeholder}
-              />
-              <Text style={[styles.inlineHint, themedMutedText]}>{copy.baseUrlHint}</Text>
-              {usingInsecureHttp && <Text style={styles.warningText}>{copy.insecureHttpWarning}</Text>}
-
-              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.apiKey}</Text>
-              <TextInput
-                value={apiKey}
-                onChangeText={setApiKey}
-                style={[styles.fieldInput, themedFieldInput]}
-                autoCapitalize="none"
-                secureTextEntry
-                placeholder="sk-..."
-                placeholderTextColor={theme.placeholder}
-              />
-
-              <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.model}</Text>
-              <TextInput
-                value={draftProfile.model}
-                onChangeText={(value) => updateDraftProfileWithReasoningReset((current) => ({ ...current, model: value }))}
-                style={[styles.fieldInput, themedFieldInput]}
-                autoCapitalize="none"
-                placeholder="gpt-5.4"
-                placeholderTextColor={theme.placeholder}
-              />
-              <Pressable
-                style={[styles.inlineUtilityButton, themedPanel, fetchingModels && styles.disabledAction]}
-                onPress={() => {
-                  void fetchModelsForDraftProfile();
-                }}
-                disabled={fetchingModels}
-              >
-                <Text style={[styles.inlineUtilityButtonText, { color: theme.primary }]}>
-                  {fetchingModels ? copy.fetchingModels : copy.fetchModels}
-                </Text>
-              </Pressable>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
-                {uniqueStrings([draftProfile.model, ...(draftProfile.cachedModels ?? []), ...availableModels, ...MODEL_SUGGESTIONS]).map((model) => (
-                  <Pressable
-                    key={model}
-                    style={[styles.suggestionChip, themedPanel, draftProfile.model === model && [styles.selectedChip, themedSelected]]}
-                    onPress={() => updateDraftProfileWithReasoningReset((current) => ({ ...current, model }))}
-                  >
-                    <Text style={[styles.suggestionChipText, themedSubtleText, draftProfile.model === model && { color: theme.primary }]}>
-                      {model}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-              <Text style={[styles.inlineHint, themedMutedText]}>{getModelHint(draftProfile.model, uiLanguage)}</Text>
-
-              <View style={[styles.compactSettingCard, themedPanel]}>
-                <View style={styles.compactSettingHeader}>
-                  <View style={styles.compactSettingTitleWrap}>
-                    <Text style={[styles.compactSettingTitle, { color: theme.text }]}>{copy.reasoningEffort}</Text>
-                    <Text style={[styles.compactSettingSubtitle, themedMutedText]}>
-                      {copy.currentValue}: {draftProfile.reasoningEffort}
-                    </Text>
-                  </View>
-                  <Pressable style={[styles.inlineUtilityButton, { backgroundColor: theme.surface, borderColor: theme.border }]} onPress={() => refreshReasoningEffortOptions(draftProfile)}>
-                    <Text style={[styles.inlineUtilityButtonText, { color: theme.primary }]}>{copy.fetchReasoningEfforts}</Text>
-                  </Pressable>
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
-                  {reasoningEffortOptions.map((effort) => (
-                    <Pressable
-                      key={effort}
-                      style={[styles.suggestionChip, { backgroundColor: theme.surface, borderColor: theme.border }, draftProfile.reasoningEffort === effort && [styles.selectedChip, themedSelected]]}
-                      onPress={() => applyReasoningEffort(effort)}
-                    >
-                      <Text
-                        style={[
-                          styles.suggestionChipText,
-                          themedSubtleText,
-                          draftProfile.reasoningEffort === effort && { color: theme.primary },
-                        ]}
-                      >
-                        {effort}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-                <Text style={[styles.inlineHint, themedMutedText]}>
-                  {reasoningEffortsFetched
-                    ? inferReasoningEffortOptions(draftProfile).length > 1
-                      ? copy.reasoningEffortsReady
-                      : copy.reasoningEffortsUnavailable
-                    : getReasoningEffortHint(draftProfile.model, draftProfile.reasoningEffort, uiLanguage)}
-                </Text>
-              </View>
-
-              <Pressable
-                style={[styles.advancedToggle, { backgroundColor: theme.surface, borderColor: theme.border }]}
-                onPress={() => setAdvancedApiSettingsOpen((current) => !current)}
-              >
-                <View style={styles.advancedToggleTextWrap}>
-                  <Text style={[styles.advancedToggleTitle, { color: theme.text }]}>{copy.advancedApiSettings}</Text>
-                  <Text style={[styles.advancedToggleSubtitle, themedMutedText]} numberOfLines={1}>
-                    {getAdvancedApiSummary(draftProfile)}
-                  </Text>
-                  {/*
-                    {draftProfile.storeResponses ? copy.storageEnabled : copy.storageDisabled}
-                    {draftProfile.projectId ? ` · ${copy.projectId}` : ''}
-                    {draftProfile.organization ? ` · ${copy.organization}` : ''}
-                    {draftProfile.systemPrompt ? ` · ${copy.systemPrompt}` : ''}
-                  */}
-                </View>
-                <Text style={[styles.advancedToggleAction, { color: theme.primary }]}>
-                  {advancedApiSettingsOpen ? copy.hideAdvancedSettings : copy.showAdvancedSettings}
-                </Text>
-              </Pressable>
-
-              <SlideFadePresence visible={advancedApiSettingsOpen} from="top" style={[styles.advancedPanel, themedPanel]}>
-                  {draftProfile.apiProtocol === 'responses' && (
-                    <>
-                      <View style={styles.switchRow}>
-                        <View style={styles.switchTextWrap}>
-                          <Text style={[styles.switchTitle, { color: theme.text }]}>{copy.responseStorage}</Text>
-                          <Text style={[styles.switchSubtitle, themedMutedText]}>
-                            {draftProfile.storeResponses ? copy.storageEnabled : copy.storageDisabled}
-                          </Text>
-                        </View>
-                        <Pressable
-                          style={[styles.compactSwitch, draftProfile.storeResponses && styles.compactSwitchOn]}
-                          onPress={() => setDraftProfile((current) => ({ ...current, storeResponses: !current.storeResponses }))}
-                        >
-                          <View style={[styles.compactSwitchThumb, draftProfile.storeResponses && styles.compactSwitchThumbOn]} />
-                        </Pressable>
-                      </View>
-                      <Text style={[styles.inlineHint, themedMutedText]}>
-                        {getProtocolStorageHint(draftProfile.apiProtocol, draftProfile.storeResponses, uiLanguage)}
-                      </Text>
-                    </>
-                  )}
-
-                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.projectId}</Text>
-                  <TextInput
-                    value={draftProfile.projectId}
-                    onChangeText={(value) => setDraftProfile((current) => ({ ...current, projectId: value }))}
-                    style={[styles.fieldInput, themedFieldInput]}
-                    autoCapitalize="none"
-                    placeholder="Optional"
-                    placeholderTextColor={theme.placeholder}
-                  />
-
-                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.organization}</Text>
-                  <TextInput
-                    value={draftProfile.organization}
-                    onChangeText={(value) => setDraftProfile((current) => ({ ...current, organization: value }))}
-                    style={[styles.fieldInput, themedFieldInput]}
-                    autoCapitalize="none"
-                    placeholder="Optional"
-                    placeholderTextColor={theme.placeholder}
-                  />
-
-                  <Text style={[styles.fieldLabel, themedSubtleText]}>{copy.systemPrompt}</Text>
-                  <TextInput
-                    value={draftProfile.systemPrompt}
-                    onChangeText={(value) => setDraftProfile((current) => ({ ...current, systemPrompt: value }))}
-                    style={[styles.fieldInput, themedFieldInput, styles.fieldInputMultiline]}
-                    multiline
-                    placeholder="Optional long-lived instruction"
-                    placeholderTextColor={theme.placeholder}
-                  />
-                  <Text style={[styles.inlineHint, themedMutedText]}>{copy.advancedConfigHint}</Text>
-              </SlideFadePresence>
-
-                <View style={styles.profileUtilityRow}>
-                  <Pressable
-                    style={[styles.secondaryActionCard, themedPanel, testingProfile && styles.disabledAction]}
-                    onPress={handleTestApiProfile}
-                    disabled={testingProfile || savingProfile}
-                  >
-                    <Text style={[styles.secondaryActionLabel, { color: theme.text }]}>
-                      {testingProfile ? copy.testingApiConnection : copy.testApiConnection}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.dangerButtonCompact}
-                    onPress={() => confirmDeleteApiProfile(draftProfile.id)}
-                    disabled={testingProfile || savingProfile}
-                  >
-                    <Text style={styles.dangerButtonText}>{copy.deleteApiProfile}</Text>
-                  </Pressable>
-                </View>
-              </ScrollView>
-            )}
-
-            <View style={styles.modalActions}>
-              <Pressable style={[styles.modalGhost, { borderColor: theme.border }]} onPress={() => closeBottomSheet()}>
-                <Text style={[styles.modalGhostText, { color: theme.subtle }]}>{copy.close}</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modalPrimary, (!bottomSheetContentReady || savingProfile) && styles.disabledAction]}
-                onPress={handleSaveApiProfile}
-                disabled={!bottomSheetContentReady || savingProfile}
-              >
-                <Text style={styles.modalPrimaryText}>{savingProfile ? copy.saving : copy.done}</Text>
-              </Pressable>
-            </View>
+              }
+            />
           </Animated.View>
         </View>
       </Modal>
@@ -4510,36 +3384,20 @@ export default function App() {
         <View
           style={styles.drawerModalRoot}
           pointerEvents="box-none"
-          onTouchStart={handleSessionTouchStart}
-          onTouchMove={handleSessionTouchMove}
-          onTouchEnd={handleSessionTouchEnd}
-          onTouchCancel={handleSessionTouchEnd}
         >
           <Animated.View style={[styles.drawerMainDismissLayer, { transform: [{ translateX: chatSceneTranslateX }] }]}>
             <Pressable
               style={styles.drawerUnderlayPressable}
               onPress={() => closeSessionsDrawer()}
               {...sessionDrawerPanResponder.panHandlers}
-              onTouchStart={handleSessionTouchStart}
-              onTouchMove={handleSessionTouchMove}
-              onTouchEnd={handleSessionTouchEnd}
-              onTouchCancel={handleSessionTouchEnd}
             />
           </Animated.View>
           <Animated.View
             style={[styles.drawerBackdrop, { width: sessionDrawerWidth, transform: [{ translateX: sessionDrawerTranslateX }] }]}
             {...sessionDrawerPanResponder.panHandlers}
-            onTouchStart={handleSessionTouchStart}
-            onTouchMove={handleSessionTouchMove}
-            onTouchEnd={handleSessionTouchEnd}
-            onTouchCancel={handleSessionTouchEnd}
           >
             <SafeAreaView
               style={[styles.sessionDrawer, { backgroundColor: theme.surface }]}
-              onTouchStart={handleSessionTouchStart}
-              onTouchMove={handleSessionTouchMove}
-              onTouchEnd={handleSessionTouchEnd}
-              onTouchCancel={handleSessionTouchEnd}
             >
               <View style={[styles.drawerHeader, { paddingTop: drawerTopInset }]}>
                 <View style={styles.drawerHeaderActions}>
@@ -4653,13 +3511,10 @@ export default function App() {
                 renderItem={renderDrawerSession}
                 keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                 keyboardShouldPersistTaps="handled"
-                onTouchStart={handleSessionTouchStart}
-                onTouchMove={handleSessionTouchMove}
-                onTouchEnd={handleSessionTouchEnd}
-                onTouchCancel={handleSessionTouchEnd}
                 nestedScrollEnabled
-                initialNumToRender={8}
+                initialNumToRender={10}
                 maxToRenderPerBatch={8}
+                updateCellsBatchingPeriod={50}
                 windowSize={7}
                 removeClippedSubviews={Platform.OS === 'android'}
                 ListFooterComponent={
@@ -4667,10 +3522,6 @@ export default function App() {
                     collapsable={false}
                     style={[styles.drawerHistoryFooterSwipeArea, { minHeight: drawerBlankSwipeFooterHeight }]}
                     {...sessionDrawerPanResponder.panHandlers}
-                    onTouchStart={handleSessionTouchStart}
-                    onTouchMove={handleSessionTouchMove}
-                    onTouchEnd={handleSessionTouchEnd}
-                    onTouchCancel={handleSessionTouchEnd}
                   />
                 }
                 ListEmptyComponent={
@@ -4890,9 +3741,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconRotateDown: {
-    transform: [{ rotate: '180deg' }],
-  },
   chatShell: {
     flex: 1,
   },
@@ -4985,17 +3833,7 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'android' ? 0 : 8,
     paddingBottom: Platform.OS === 'android' ? 0 : 7,
     includeFontPadding: false,
-  },
-  composerOverlayActions: {
-    position: 'absolute',
-    top: 5,
-    right: 5,
-    bottom: 5,
-    zIndex: 2,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  composerOverlayButton: {
+  },  composerOverlayButton: {
     position: 'absolute',
     right: 5,
     bottom: 5,
@@ -5075,14 +3913,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 12,
-  },
-  fullComposerTitle: {
-    flex: 1,
-    color: '#111827',
-    fontSize: 19,
-    fontWeight: '900',
-  },
-  fullComposerClose: {
+  },  fullComposerClose: {
     width: 38,
     height: 38,
     borderRadius: 19,
@@ -5112,18 +3943,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 10,
     paddingTop: 10,
-  },
-  fullComposerGhost: {
-    minHeight: 42,
-    borderRadius: 21,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#D8E0EA',
-  },
-  fullComposerGhostText: {
+  },  fullComposerGhostText: {
     color: '#334155',
     fontSize: 14,
     fontWeight: '800',
@@ -5166,12 +3986,7 @@ const styles = StyleSheet.create({
     left: 0,
     zIndex: 20,
     backgroundColor: 'transparent',
-  },
-  drawerUnderlay: {
-    flex: 1,
-    backgroundColor: '#0F172A',
-  },
-  drawerUnderlayPressable: {
+  },  drawerUnderlayPressable: {
     position: 'absolute',
     top: 0,
     right: 0,
@@ -5203,11 +4018,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
     paddingTop: Platform.OS === 'android' ? 20 : 8,
-  },
-  drawerDismissArea: {
-    flex: 1,
-  },
-  modalDismissArea: {
+  },  modalDismissArea: {
     flex: 1,
     width: '100%',
   },
@@ -5259,19 +4070,7 @@ const styles = StyleSheet.create({
   },
   contextMenuDangerText: {
     color: '#FCA5A5',
-  },
-  modalCard: {
-    maxHeight: '92%',
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 18,
-    paddingTop: 20,
-    paddingBottom: 24,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  modalCardCompact: {
+  },  modalCardCompact: {
     maxHeight: '70%',
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 28,
@@ -5330,16 +4129,6 @@ const styles = StyleSheet.create({
   },
   modalScroll: {
     marginTop: 18,
-  },
-  modalWarmup: {
-    minHeight: 320,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalWarmupText: {
-    color: '#64748B',
-    fontSize: 14,
-    fontWeight: '800',
   },
   sectionLabel: {
     color: '#2563EB',
@@ -5442,14 +4231,7 @@ const styles = StyleSheet.create({
   drawerIconButtonActive: {
     borderColor: '#2563EB',
     backgroundColor: '#EFF6FF',
-  },
-  drawerHeaderHint: {
-    color: '#64748B',
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 4,
-  },
-  drawerHeaderButton: {
+  },  drawerHeaderButton: {
     minHeight: 36,
     borderRadius: 18,
     borderWidth: 1,
@@ -5468,11 +4250,7 @@ const styles = StyleSheet.create({
     color: '#334155',
     fontSize: 14,
     fontWeight: '800',
-  },
-  drawerHeaderButtonTextActive: {
-    color: '#2563EB',
-  },
-  drawerSearchWrap: {
+  },  drawerSearchWrap: {
     position: 'relative',
     marginHorizontal: 22,
     marginTop: 10,
@@ -5616,15 +4394,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     flexShrink: 0,
-  },
-  drawerSessionActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    marginTop: 9,
-    marginLeft: 4,
-  },
-  sessionSelectMark: {
+  },  sessionSelectMark: {
     width: 24,
     height: 24,
     borderRadius: 12,
@@ -5685,11 +4455,7 @@ const styles = StyleSheet.create({
     color: '#111827',
     fontSize: 15,
     fontWeight: '800',
-  },
-  modelOptionTextSelected: {
-    color: '#1D4ED8',
-  },
-  renameInput: {
+  },  renameInput: {
     marginTop: 16,
   },
   renameCard: {
@@ -5757,29 +4523,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
-  },
-  profileSummaryCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#D8E0EA',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    marginTop: 10,
-  },
-  profileSummaryHeader: {
+  },  profileSummaryHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
-  },
-  profileSummaryTitle: {
-    flex: 1,
-    color: '#111827',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  profileSummaryBadge: {
+  },  profileSummaryBadge: {
     color: '#1D4ED8',
     fontSize: 11,
     fontWeight: '800',
@@ -5787,13 +4536,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 9,
     paddingVertical: 5,
-  },
-  profileSummaryText: {
-    color: '#64748B',
-    fontSize: 12,
-    marginTop: 8,
-  },
-  profileSummaryAction: {
+  },  profileSummaryAction: {
     color: '#2563EB',
     fontSize: 13,
     fontWeight: '800',
@@ -5818,27 +4561,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     marginTop: 8,
-  },
-  pluginRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-  },
-  pluginBadge: {
+  },  pluginBadge: {
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#BFDBFE',
     backgroundColor: '#EFF6FF',
     paddingHorizontal: 10,
     paddingVertical: 6,
-  },
-  pluginBadgeText: {
-    color: '#1D4ED8',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  contactRow: {
+  },  contactRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
@@ -5855,13 +4585,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 10,
     paddingVertical: 7,
-  },
-  contactIcon: {
-    color: '#2563EB',
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  contactText: {
+  },  contactText: {
     color: '#334155',
     fontSize: 12,
     fontWeight: '800',
@@ -5888,20 +4612,12 @@ const styles = StyleSheet.create({
     color: '#111827',
     fontSize: 13,
     fontWeight: '800',
-  },
-  profileChipTitleSelected: {
-    color: '#1D4ED8',
-  },
-  profileChipMeta: {
+  },  profileChipMeta: {
     color: '#64748B',
     fontSize: 11,
     fontWeight: '700',
     marginTop: 5,
-  },
-  profileChipMetaSelected: {
-    color: '#2563EB',
-  },
-  formSectionHeader: {
+  },  formSectionHeader: {
     minHeight: 32,
     flexDirection: 'row',
     alignItems: 'center',
@@ -5915,12 +4631,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textAlign: 'right',
-  },
-  profileList: {
-    gap: 10,
-    marginBottom: 12,
-  },
-  profileItem: {
+  },  profileItem: {
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -5930,32 +4641,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-  },
-  profileItemSelected: {
-    borderColor: '#60A5FA',
-    backgroundColor: '#EFF6FF',
-  },
-  profileItemMain: {
+  },  profileItemMain: {
     flex: 1,
-  },
-  profileItemTitle: {
-    color: '#111827',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  profileItemSubtitle: {
+  },  profileItemSubtitle: {
     color: '#64748B',
     fontSize: 12,
     marginTop: 5,
-  },
-  profileStateText: {
-    minWidth: 48,
-    color: '#94A3B8',
-    fontSize: 11,
-    fontWeight: '800',
-    textAlign: 'right',
-  },
-  profileStateActive: {
+  },  profileStateActive: {
     color: '#1D4ED8',
   },
   suggestionRow: {
@@ -5979,26 +4671,11 @@ const styles = StyleSheet.create({
   selectedChip: {
     backgroundColor: '#DBEAFE',
     borderColor: '#60A5FA',
-  },
-  selectedChipText: {
-    color: '#1D4ED8',
-  },
-  binaryRow: {
+  },  binaryRow: {
     flexDirection: 'row',
     gap: 10,
     marginTop: 4,
-  },
-  binaryChip: {
-    flex: 1,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#D8E0EA',
-    backgroundColor: '#F8FAFC',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  binaryChipText: {
+  },  binaryChipText: {
     color: '#334155',
     fontSize: 12,
     fontWeight: '700',
@@ -6205,43 +4882,19 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 14,
     marginTop: 8,
-  },
-  sessionItem: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    padding: 14,
-    marginBottom: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  sessionActions: {
+  },  sessionActions: {
     alignItems: 'flex-end',
     justifyContent: 'center',
     gap: 10,
   },
   sessionMeta: {
     flex: 1,
-  },
-  sessionTitle: {
-    color: '#111827',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  sessionSubtitle: {
+  },  sessionSubtitle: {
     color: '#64748B',
     fontSize: 12,
     marginTop: 6,
     lineHeight: 17,
-  },
-  deleteText: {
-    color: '#DC2626',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  sessionActionText: {
+  },  sessionActionText: {
     color: '#2563EB',
     fontSize: 13,
     fontWeight: '700',

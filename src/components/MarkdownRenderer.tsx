@@ -250,7 +250,11 @@ function extractCodeBlocksFromTokens(tokens: MarkdownItToken[]): CodeBlockData[]
   return blocks;
 }
 
-function renderCodeBlockFallback(block: CodeBlockData, index: number, colorScheme: 'light' | 'dark') {
+function renderCodeBlockFallback(
+  block: CodeBlockData,
+  index: number,
+  colorScheme: 'light' | 'dark'
+) {
   return (
     <CodeBlock
       key={`${index}-${block.language}-${block.code.length}`}
@@ -261,12 +265,22 @@ function renderCodeBlockFallback(block: CodeBlockData, index: number, colorSchem
   );
 }
 
-function PlainTextFallback({ text, colorScheme = 'light' }: { text: string; colorScheme?: 'light' | 'dark' }) {
+function PlainTextFallback({
+  text,
+  colorScheme = 'light',
+}: {
+  text: string;
+  colorScheme?: 'light' | 'dark';
+}) {
   const codeBlocks = useMemo(() => extractCodeBlocksFromTokens(markdownIt.parse(normalizeMarkdownForStreaming(text), {})), [text]);
   const dynamicStyles = useMemo(() => createMarkdownStyles(colorScheme), [colorScheme]);
 
   if (codeBlocks.length > 0) {
-    return <View style={markdownStyles.fallbackWrap}>{codeBlocks.map((block, index) => renderCodeBlockFallback(block, index, colorScheme))}</View>;
+    return (
+      <View style={markdownStyles.fallbackWrap}>
+        {codeBlocks.map((block, index) => renderCodeBlockFallback(block, index, colorScheme))}
+      </View>
+    );
   }
 
   return (
@@ -804,7 +818,11 @@ function HtmlMarkdownView({ text, fallback, colorScheme = 'light' }: { text: str
   );
 }
 
-function MarkdownBody({ text, deferCodeHighlight = false, colorScheme = 'light' }: Props) {
+function MarkdownBody({
+  text,
+  deferCodeHighlight = false,
+  colorScheme = 'light',
+}: Props) {
   const normalized = useMemo(() => normalizeMarkdownForStreaming(text), [text]);
   const dynamicStyles = useMemo(() => createMarkdownStyles(colorScheme), [colorScheme]);
 
@@ -851,24 +869,55 @@ function containsMath(text: string): boolean {
   return splitMarkdownAroundCode(text).some((segment) => segment.kind === 'math');
 }
 
-function SegmentedMarkdownBody({ text, deferCodeHighlight, colorScheme = 'light' }: Props) {
+function SegmentedMarkdownBody({
+  text,
+  deferCodeHighlight,
+  colorScheme = 'light',
+}: Props) {
   const hasMath = useMemo(() => !deferCodeHighlight && containsMath(text), [deferCodeHighlight, text]);
   const fallback = useMemo(
-    () => <MarkdownBody text={text} deferCodeHighlight={deferCodeHighlight} colorScheme={colorScheme} />,
+    () => (
+      <MarkdownBody
+        text={text}
+        deferCodeHighlight={deferCodeHighlight}
+        colorScheme={colorScheme}
+      />
+    ),
     [colorScheme, deferCodeHighlight, text]
   );
 
   if (!hasMath) {
-    return <MarkdownBody text={text} deferCodeHighlight={deferCodeHighlight} colorScheme={colorScheme} />;
+    return (
+      <MarkdownBody
+        text={text}
+        deferCodeHighlight={deferCodeHighlight}
+        colorScheme={colorScheme}
+      />
+    );
   }
 
   return <HtmlMarkdownView text={text} fallback={fallback} colorScheme={colorScheme} />;
 }
 
-function MarkdownRendererComponent({ text, deferCodeHighlight = false, colorScheme = 'light' }: Props) {
+function MarkdownRendererComponent({
+  text,
+  deferCodeHighlight = false,
+  colorScheme = 'light',
+}: Props) {
   return (
-    <MarkdownErrorBoundary fallback={<PlainTextFallback text={text} colorScheme={colorScheme} />}>
-      <SegmentedMarkdownBody text={text} deferCodeHighlight={deferCodeHighlight} colorScheme={colorScheme} />
+    <MarkdownErrorBoundary
+      fallback={
+        <PlainTextFallback
+          text={text}
+          colorScheme={colorScheme}
+        />
+      }
+    >
+      <SegmentedMarkdownBody
+        text={text}
+        deferCodeHighlight={deferCodeHighlight}
+        colorScheme={colorScheme}
+      />
     </MarkdownErrorBoundary>
   );
 }

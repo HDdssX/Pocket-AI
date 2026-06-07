@@ -1,6 +1,8 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import type { LayoutChangeEvent } from 'react-native';
+import { Maximize2, X } from 'lucide-react-native';
 
 type Props = {
   code: string;
@@ -217,19 +219,18 @@ function estimateCodeContentWidth(code: string): number {
   return Math.min(MAX_ESTIMATED_CODE_WIDTH, Math.max(40, longestLine * MONOSPACE_CHAR_WIDTH + 24));
 }
 
-function PlainCode({ code, contentWidth }: { code: string; contentWidth: number }) {
+function PlainCode({ code, width, wrap }: { code: string; width?: number; wrap: boolean }) {
   return (
-    <ScrollView
-      horizontal
-      nestedScrollEnabled
-      showsHorizontalScrollIndicator={false}
-      style={styles.codeScroll}
-      contentContainerStyle={[styles.codeScrollContent, { minWidth: contentWidth }]}
+    <Text
+      selectable
+      style={[
+        styles.plainCode,
+        wrap ? styles.codeTextWrapped : styles.codeTextNoWrap,
+        width ? { width } : undefined,
+      ]}
     >
-      <Text selectable style={[styles.plainCode, { width: contentWidth }]}>
-        {code || ' '}
-      </Text>
-    </ScrollView>
+      {code || ' '}
+    </Text>
   );
 }
 
@@ -400,35 +401,59 @@ function tokenStyle(kind: HighlightKind) {
 function HighlightedCode({
   code,
   language,
-  contentWidth,
+  width,
+  wrap,
 }: {
   code: string;
   language: string;
-  contentWidth: number;
+  width?: number;
+  wrap: boolean;
 }) {
   const tokens = useMemo(() => tokenizeCode(code || ' ', language), [code, language]);
 
   return (
-    <ScrollView
-      horizontal
-      nestedScrollEnabled
-      showsHorizontalScrollIndicator={false}
-      style={styles.codeScroll}
-      contentContainerStyle={[styles.codeScrollContent, { minWidth: contentWidth }]}
+    <Text
+      selectable
+      style={[
+        styles.plainCode,
+        wrap ? styles.codeTextWrapped : styles.codeTextNoWrap,
+        width ? { width } : undefined,
+      ]}
     >
-      <Text selectable style={[styles.plainCode, { width: contentWidth }]}>
-        {tokens.map((token, index) => (
-          <Text key={`${index}-${token.kind}`} style={tokenStyle(token.kind)}>
-            {token.text}
-          </Text>
-        ))}
-      </Text>
-    </ScrollView>
+      {tokens.map((token, index) => (
+        <Text key={`${index}-${token.kind}`} style={tokenStyle(token.kind)}>
+          {token.text}
+        </Text>
+      ))}
+    </Text>
   );
+}
+
+function CodeContent({
+  canHighlight,
+  code,
+  language,
+  width,
+  wrap,
+}: {
+  canHighlight: boolean;
+  code: string;
+  language: string;
+  width?: number;
+  wrap: boolean;
+}) {
+  if (canHighlight) {
+    return <HighlightedCode code={code} language={language} width={width} wrap={wrap} />;
+  }
+
+  return <PlainCode code={code} width={width} wrap={wrap} />;
 }
 
 function CodeBlockComponent({ code, language, deferHighlight = false }: Props) {
   const [copied, setCopied] = useState(false);
+  const [fullscreenVisible, setFullscreenVisible] = useState(false);
+  const [codeBodyWidth, setCodeBodyWidth] = useState(0);
+  const { width: windowWidth } = useWindowDimensions();
   const normalizedCode = code.replace(/\r\n?/g, '\n').replace(/\n$/, '');
   const resolvedLanguage = useMemo(
     () => inferLanguage(normalizedCode, language),
@@ -440,6 +465,7 @@ function CodeBlockComponent({ code, language, deferHighlight = false }: Props) {
     HIGHLIGHT_LANGUAGES.has(resolvedLanguage);
   const accentColor = LANGUAGE_ACCENTS[resolvedLanguage] ?? '#93C5FD';
   const contentWidth = useMemo(() => estimateCodeContentWidth(normalizedCode), [normalizedCode]);
+  const fullscreenContentWidth = Math.max(contentWidth, Math.max(320, Math.floor(windowWidth - 24)));
 
   useEffect(() => {
     if (!copied) return undefined;
@@ -453,6 +479,11 @@ function CodeBlockComponent({ code, language, deferHighlight = false }: Props) {
     setCopied(true);
   }
 
+  function handleCodeBodyLayout(event: LayoutChangeEvent) {
+    const nextWidth = Math.max(0, Math.floor(event.nativeEvent.layout.width));
+    setCodeBodyWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
+  }
+
   return (
     <View style={styles.wrap}>
       <View style={styles.header}>
@@ -462,19 +493,76 @@ function CodeBlockComponent({ code, language, deferHighlight = false }: Props) {
             {displayLanguage(resolvedLanguage)}
           </Text>
         </View>
-        <Pressable style={styles.copyButton} onPress={copyCode} accessibilityRole="button">
-          <Text style={styles.copyText}>{copied ? 'Copied' : 'Copy'}</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable style={styles.copyButton} onPress={copyCode} accessibilityRole="button">
+            <Text style={styles.copyText}>{copied ? 'Copied' : 'Copy'}</Text>
+          </Pressable>
+          <Pressable
+            style={styles.headerIconButton}
+            onPress={() => setFullscreenVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Fullscreen code"
+          >
+            <Maximize2 size={16} color="#93C5FD" strokeWidth={2.4} />
+          </Pressable>
+        </View>
       </View>
-      {canHighlight ? (
-        <HighlightedCode
+      <View style={styles.codeBody} onLayout={handleCodeBodyLayout}>
+        <CodeContent
+          canHighlight={canHighlight}
           code={normalizedCode}
           language={resolvedLanguage}
-          contentWidth={contentWidth}
+          width={codeBodyWidth || undefined}
+          wrap
         />
-      ) : (
-        <PlainCode code={normalizedCode} contentWidth={contentWidth} />
-      )}
+      </View>
+      <Modal visible={fullscreenVisible} animationType="fade" onRequestClose={() => setFullscreenVisible(false)}>
+        <SafeAreaView style={styles.fullscreenRoot}>
+          <View style={styles.fullscreenHeader}>
+            <View style={styles.languageWrap}>
+              <View style={[styles.languageDot, { backgroundColor: accentColor }]} />
+              <Text style={[styles.language, { color: accentColor }]} numberOfLines={1} ellipsizeMode="tail">
+                {displayLanguage(resolvedLanguage)}
+              </Text>
+            </View>
+            <View style={styles.headerActions}>
+              <Pressable style={styles.copyButton} onPress={copyCode} accessibilityRole="button">
+                <Text style={styles.copyText}>{copied ? 'Copied' : 'Copy'}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.headerIconButton}
+                onPress={() => setFullscreenVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close fullscreen code"
+              >
+                <X size={18} color="#E5E7EB" strokeWidth={2.4} />
+              </Pressable>
+            </View>
+          </View>
+          <ScrollView
+            style={styles.fullscreenVertical}
+            contentContainerStyle={styles.fullscreenVerticalContent}
+            showsVerticalScrollIndicator
+          >
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              directionalLockEnabled
+              showsHorizontalScrollIndicator
+              style={styles.codeScroll}
+              contentContainerStyle={[styles.codeScrollContent, { minWidth: fullscreenContentWidth }]}
+            >
+              <CodeContent
+                canHighlight={canHighlight}
+                code={normalizedCode}
+                language={resolvedLanguage}
+                width={fullscreenContentWidth}
+                wrap={false}
+              />
+            </ScrollView>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }
@@ -505,6 +593,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#1F2937',
   },
+  headerActions: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   languageWrap: {
     flexShrink: 1,
     marginRight: 12,
@@ -527,11 +621,22 @@ const styles = StyleSheet.create({
     minHeight: 30,
     justifyContent: 'center',
     paddingLeft: 8,
+    paddingRight: 4,
   },
   copyText: {
     color: '#93C5FD',
     fontSize: 12,
     fontWeight: '800',
+  },
+  headerIconButton: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  codeBody: {
+    width: '100%',
+    backgroundColor: '#0B1220',
   },
   codeScroll: {
     maxWidth: '100%',
@@ -551,7 +656,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     minWidth: 40,
+  },
+  codeTextWrapped: {
+    alignSelf: 'stretch',
+    flexShrink: 1,
+  },
+  codeTextNoWrap: {
     flexShrink: 0,
+  },
+  fullscreenRoot: {
+    flex: 1,
+    backgroundColor: '#0B1220',
+  },
+  fullscreenHeader: {
+    minHeight: 48,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#111827',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1F2937',
+  },
+  fullscreenVertical: {
+    flex: 1,
+    backgroundColor: '#0B1220',
+  },
+  fullscreenVerticalContent: {
+    alignItems: 'flex-start',
+    paddingBottom: 24,
   },
   tokenComment: {
     color: '#718096',

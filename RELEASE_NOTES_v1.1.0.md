@@ -1,59 +1,69 @@
 # Pocket AI v1.1.0
 
-This release promotes the `1.0.20-beta.6` Android composer/keyboard fix to the stable `v1.1.0` line and consolidates the full update history since `v1.0.0`.
+`v1.1.0` 是 `v1.0.0` 之后所有 `v1.0.x` 与 `v1.0.20-beta.x` 变更的正式汇总版。这个版本不删除既有功能，不改变 API 参数语义、导航路径或 Android 原生能力调用行为，主要吸收此前持续迭代中的聊天渲染、输入区、会话抽屉、设置页、API 配置、Android 键盘适配和代码块体验改进。
 
-## Highlights Since v1.0.0
+## 重点汇总
 
-- Fixed the Android composer getting stuck above the bottom of the screen after the keyboard closes or the screen size changes.
-- Added and stabilized Markdown, LaTeX, KaTeX, and code block rendering across streaming and completed messages.
-- Added message selection, copy/share/regenerate actions, user-message editing, variants, and branch switching.
-- Reworked the conversation drawer, gesture handling, settings navigation, and session management flows.
-- Improved API profile handling, model list caching, reasoning effort support, streaming behavior, and release checking.
-- Refined the composer, attachment row, dark/light/system appearance, About page, status insets, and touch ergonomics.
-- Updated release metadata for `v1.1.0` and pointed latest-release checks to `HDdssX/Pocket-AI`.
+- 消息渲染：稳定 Markdown、LaTeX、KaTeX 和代码块渲染，修复公式空白、行内公式错位、流式渲染抖动和代码块完成后崩溃等问题。
+- 代码块：普通消息中的代码块会按实际宽度实时自动换行，不再左右滑动；代码块右上角新增全屏按钮，全屏模式保留语法高亮、纵向浏览和横向滑动，且不自动换行。
+- 对话操作：新增并稳定长按消息菜单、区域选择、复制、分享、重新生成、用户消息编辑、回复变体和分支切换。
+- 输入区：持续优化附件入口、长文本输入、全屏编辑、发送/停止按钮布局、流式期间可编辑、自动滚动暂停/恢复和小窗/状态栏适配。
+- 会话抽屉：改进左侧会话抽屉、搜索、批量删除、FlatList 虚拟化、滑动手势、空白区域触控和主页面联动动画。
+- 设置与外观：整理设置子页面导航、API 配置入口、模型选择页、About 页面、版本检查卡片，并支持浅色、深色和跟随系统外观。
+- API 配置：支持多个 OpenAI 兼容配置，整理模型列表缓存、重新获取模型、推理强度候选和最新版本检查地址。
+- Android 适配：修复输入框在键盘关闭、窗口尺寸变化、小窗或浮动键盘场景下停留在错误位置的问题，并引入原生 IME inset 桥接。
+- 模块瘦身：拆分部分大文件中的 copy/theme/conversation/profile/release/native/helper/icon/presence 逻辑，移除无用依赖和不可达 UI，减少 `App.tsx` 体积。
+- 版本元数据：应用版本更新为 `1.1.0`，Android `versionCode` 更新为 `34`，最新版本检查指向 `HDdssX/Pocket-AI`。
 
-## Fixed: Android Composer Stuck Above Bottom
+## 分领域变化
 
-- Reproduction: open a chat on Android, focus the composer, close the input method, then optionally change the screen resolution. The composer could remain fixed above the bottom instead of returning to the bottom edge.
-- Cause: Android was receiving duplicate keyboard avoidance from both native `adjustResize` and `KeyboardAvoidingView`, while stale composer lift measurements/animations could still complete after keyboard hide or screen resize.
-- Fix: Android now relies on native resize behavior, while iOS keeps `KeyboardAvoidingView`. Composer lift animations and measurements are guarded so stale callbacks are ignored after keyboard hide or window-size changes.
+- Markdown / LaTeX / 代码块：从原生 Markdown、KaTeX WebView、公式 fallback、离线 KaTeX 资源、代码 token 高亮一路稳定到当前代码块自动换行与全屏查看。
+- 聊天交互：从基础流式对话扩展到消息选择、复制分享、重新生成、用户消息编辑、变体保留和分支切换。
+- Composer / 附件：输入框从单一输入区逐步调整为附件入口、可扩展输入、全屏编辑、按钮分层布局和流式期间可继续编辑。
+- 抽屉 / 导航：会话管理从侧栏逐步演进为可滑动抽屉、设置子页面、手势返回、空白区域捕获和主场景联动。
+- API / 模型：模型列表获取和缓存从即时刷新改为按配置缓存与显式刷新，减少页面跳动和跨配置混淆。
+- Android 原生能力：保留图片分享、多图分享、分屏拖入、SecureStore/Keystore、本地加密存储和附件读取行为，同时修复键盘 inset 与窗口变化适配。
+- 维护性：提取复用模块，删除无用代码和依赖，避免把 release、profile、conversation、theme、native helper 等逻辑继续堆在入口文件里。
 
-## Version-by-Version Summary
+## 逐版本汇总
 
-- `v1.0.0`: Baseline release that stabilized chat Markdown rendering.
-- `v1.0.1`: Added KaTeX-based LaTeX rendering, preserved formula delimiters, bundled offline KaTeX CSS/fonts/runtime, and rendered formulas through WebView.
-- `v1.0.2`: Fixed blank assistant areas around formula messages, added native Markdown fallback paths, improved formula WebView/no-response fallbacks, and stabilized bubble width.
-- `v1.0.3`: Fixed inline `\(...\)` layout, made formula backgrounds transparent, and prerendered formula-heavy messages as full-message HTML.
-- `v1.0.4`: Improved formula rendering stability with first-frame/layout waits, no-cache remounts, non-blocking font handling, native Markdown during streaming, and throttled auto-scroll.
-- `v1.0.5`: Added long-press message menus, text selection, copy/share/regenerate actions, a sliding session drawer, drawer search/settings, batch delete, layout updates, expanded composer behavior, and code syntax highlighting.
-- `v1.0.6`: Fixed crashes after code output, switched to native token code rendering, removed the syntax-highlighter dependency, replaced Unicode/emoji icons, improved long composer/search text, restored drawer swipe back, adjusted status insets, simplified labels, and kept original bubble text selectable.
-- `v1.0.7`: Added the selection bottom panel, user-message editing, response variants, branch switching, lucide icons, full-screen composer, a higher expand threshold, and overlay buttons.
-- `v1.0.8`: Reworked the composer with separate attachment/input controls, a taller input, attachment row support, a FlatList drawer, and smoother drawer animation.
-- `v1.0.9`: Added settings subpage navigation, status inset refinements, expanded editor cleanup, system selection panel updates, model picker cleanup, and bottom-sheet close animation improvements.
-- `v1.0.10`: Made the attachment area full width, stacked input actions on the right, and prevented unnecessary drawer reopen animation.
-- `v1.0.11`: Improved API configuration model fetch caching/display, composer sizing, top model area layout, and compact session list dividers/time display.
-- `v1.0.12`: Added per-profile cached model lists and reasoning efforts, and limited model fetching to explicit user actions.
-- `v1.0.13`: Refined composer expand/send placement, added an animated thinking placeholder, improved overlay backdrop animation, reduced API sheet jank, restored the home model button style, and updated About credits.
-- `v1.0.14`: Removed "latest chats first", restored left-swipe navigation, lowered the drawer header, centered the single-line composer, added app version/latest-release display, and added light/dark/system appearance modes.
-- `v1.0.15`: Updated About co-maintainers, improved code block horizontal scrolling and dark surfaces, supported system orientation rotation, fixed dark-mode drawer button contrast, moved API config into a settings subpage, kept the composer editable while streaming, added auto-scroll pause/resume, improved drawer finger tracking, and limited generated titles to 15 characters.
-- `v1.0.16`: Removed broad button layout animation, replaced it with focused slide/fade popovers, kept assistant content stable, loosened drawer swipe detection, added runtime composer lift, aligned About entries, and added the version checking card.
-- `v1.0.17`: Allowed diagonal left swipe from blank drawer areas, made the swipe footer transparent, and expanded the touchable session list area.
-- `v1.0.18`: Tracked touch continuously across drawer root/backdrop/list/footer and increased drawer close sensitivity.
-- `v1.0.19`: Further increased drawer close sensitivity without changing home swipe-open behavior.
-- `v1.0.20-beta.1`: Moved the drawer out of the native modal into the main scene, introduced a shared horizontal animated value, and added directional transitions for settings subpages.
-- `v1.0.20-beta.2`: Fixed the blank launch screen caused by drawer/home animation starting open, initialized the drawer hidden, and resynced drawer position on window-width changes.
-- `v1.0.20-beta.3`: Fixed the composer staying lifted after keyboard dismissal by listening for keyboard show/hide events, canceling pending lift work, and resetting immediately/delayed after hide.
-- `v1.0.20-beta.5`: Smoothed composer lift/drop with native transforms, stabilized measurements during animation, and deduplicated drawer close animation for smoother interaction.
-- `v1.0.20-beta.6`: Fixed the Android composer remaining above the bottom after keyboard close by removing duplicate Android keyboard avoidance and ignoring stale lift measurements/animations after hide or resize.
-- `v1.1.0`: Promotes the beta keyboard/composer fix to stable, sets app/package/Android version metadata to `1.1.0`, uses Android `versionCode` 27, and updates the latest-release API URL to `HDdssX/Pocket-AI`.
+- `v1.0.0`：稳定基础 Android 本地优先聊天应用，支持 OpenAI 兼容 API、多配置、模型切换、流式回复、附件输入、代码块复制、Android 图片分享、会话管理、中英文切换、LaTeX 清理插件和本地安全存储。
+- `v1.0.1`：引入 KaTeX 公式渲染，保留公式分隔符，内置离线 KaTeX CSS/字体/运行时，并使用 WebView 承载公式排版。
+- `v1.0.2`：修复含公式消息视觉空白，普通 Markdown 回到原生渲染，增加公式渲染失败/无响应 fallback，并稳定助手气泡宽度。
+- `v1.0.3`：修复 `\(...\)` 行内公式排版，保持 `$$...$$` 和 `\[...\]` 为行间公式，公式区域改为透明背景，并预渲染含公式消息。
+- `v1.0.4`：改善公式 WebView 首帧、布局等待、无缓存重挂载和字体加载策略，流式期间继续使用原生 Markdown，并节流自动滚动。
+- `v1.0.5`：新增长按消息菜单、区域选择、复制/分享/重新生成、滑动会话侧栏、搜索/设置入口、批量删除、长文本编辑和多语言代码高亮。
+- `v1.0.6`：修复代码输出完成后崩溃，改为原生 token 高亮并移除第三方高亮依赖；同时替换 Unicode 图标、优化长文本输入/搜索、状态栏避让和消息选择体验。
+- `v1.0.7`：重做区域选择底部面板，新增用户消息编辑、回复变体、分支切换、lucide 图标、全屏输入页和更稳的输入框按钮布局。
+- `v1.0.8`：重构输入区为附件按钮加输入框布局，提升输入框可见高度，附件入口下沉，并用 FlatList 优化会话抽屉列表性能。
+- `v1.0.9`：整理设置子页面返回逻辑、状态栏间距、大屏编辑页、区域选择面板、模型选择页和底部弹层关闭动画。
+- `v1.0.10`：附件功能区横跨输入区宽度，输入框右侧操作改为上下布局，并避免会话抽屉重复播放打开动画。
+- `v1.0.11`：修复 API 配置页模型候选刷新显示问题，优化候选模型排序、输入框尺寸、主页模型区域和会话列表密度。
+- `v1.0.12`：按 API 配置缓存模型列表和推理强度候选，模型与推理强度刷新改为用户显式触发，避免跨配置显示错误。
+- `v1.0.13`：优化输入框展开/发送按钮位置，新增等待首个 token 的“思考中……”占位，降低弹层和 API 配置页首帧卡顿，并更新 About。
+- `v1.0.14`：恢复抽屉左滑返回，调整抽屉头部和单行输入垂直对齐，新增版本显示、最新版本检查和浅色/深色/系统外观模式。
+- `v1.0.15`：整理 About 共同维护者展示，优化代码块横向滚动和暗色表面，支持系统方向旋转，移动 API 配置到设置子页，流式期间保持输入可编辑，并优化自动滚动与抽屉手势。
+- `v1.0.16`：移除影响全局按钮的布局动画，改为局部 slide/fade 出现效果；改善抽屉斜向手势、运行时输入区抬升、About 对齐和版本检查卡片。
+- `v1.0.17`：修复会话抽屉空白区域左滑关闭，增加透明手势 footer，并扩大列表可触控区域。
+- `v1.0.18`：在抽屉根节点、遮罩、列表和空白 footer 连续跟踪触摸，提高斜向滑动和短距离关闭的可靠性。
+- `v1.0.19`：进一步提高会话抽屉关闭灵敏度，同时保持主页右滑打开灵敏度不变。
+- `v1.0.20-beta.1`：将会话抽屉从原生 Modal 层移入主场景层，抽屉和主页共享水平动画值，并增加设置子页方向转场。
+- `v1.0.20-beta.2`：修复启动白屏，初始化抽屉为隐藏位置，并在窗口宽度变化时同步抽屉/主页位置。
+- `v1.0.20-beta.3`：监听键盘显示/隐藏，取消过期输入区抬升测量，并在键盘关闭后立即和延迟二次复位。
+- `v1.0.20-beta.5`：用原生 transform 平滑输入区抬升/回落，稳定动画期间测量，并去重抽屉关闭动画。
+- `v1.0.20-beta.6`：移除 Android 上重复的键盘避让，忽略键盘关闭或窗口变化后的过期测量/动画，避免输入框悬停在错误位置。
+- `v1.0.20-beta.7`：新增基于 `WindowInsetsCompat` / `WindowInsetsAnimationCompat` 的 Android IME inset 桥接，让输入区跟随真实键盘 inset，兼容浮动键盘、小窗和全高度键盘。
+- `v1.0.20-beta.8` ~ `v1.0.20-beta.13`：内部 beta 迭代并入 `v1.1.0`，包括模块化瘦身、无用依赖清理、release/version/native/helper 提取，以及代码块普通模式自动换行和全屏查看模式。
+- `v1.1.0`：将上述全部 `v1.0.x` 和 `v1.0.20-beta.x` 变更作为正式版发布，并统一版本元数据。
 
-## Verification
+## 验证
 
 - `cmd /c node_modules\.bin\tsc.cmd --noEmit`
+- `npm run smoke`
 - `git diff --check`
 
-## Artifact Policy
+## 提交说明
 
-- APK is not included in this PR.
-- Android build outputs, Gradle caches, `node_modules`, local signing files, environment files, logs, screenshots, and cache files are not included.
-- Formal release APK builds remain maintainer-owned.
+- 本提交不包含 `node_modules`、Android build 输出、Gradle 缓存、APK、截图、日志、缓存文件、本地属性文件、签名文件、私钥、证书或环境变量文件。
+- 本提交不修改 release 签名配置，不硬编码 API Key、个人 Base URL、账号信息或 Token。
+- 正式 release APK 仍由维护者构建。

@@ -384,7 +384,11 @@ function MessageBubbleComponent({
         ) : showThinking ? (
           <ThinkingIndicator language={language} />
         ) : (
-          <MarkdownRenderer text={displayText} deferCodeHighlight={isStreaming} colorScheme={colorScheme} />
+          <MarkdownRenderer
+            text={displayText}
+            deferCodeHighlight={isStreaming}
+            colorScheme={colorScheme}
+          />
         )}
         {message.attachments.length > 0 && (
           <View style={styles.attachments}>
